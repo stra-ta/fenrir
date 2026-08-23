@@ -1,0 +1,13 @@
+# Fenrir canonical red-team objective: maximize worst-case tail latency.
+# Reward the most pathological workload (highest p99 latency), with only a
+# minimal "it actually ran" throughput gate so every real workload counts.
+constraints = [
+  { metric = "throughput_ops_s", op = "gte", threshold = 1.0 },
+]
+
+secondary = []
+
+[primary]
+type = "Metric"
+name = "p99_latency_ns"
+aggregate = "p99"

@@ -1,0 +1,19 @@
+# Fenrir canonical objective: maximize tail amplification.
+# p99_latency_ns / p50_latency_ns, no throughput constraint, so every
+# workload counts and we compare how each optimizer discovers pathological
+# tail-amplifying behaviors.
+constraints = []
+secondary = []
+
+[primary]
+type = "Ratio"
+
+[primary.numerator]
+type = "Metric"
+name = "p99_latency_ns"
+aggregate = "p99"
+
+[primary.denominator]
+type = "Metric"
+name = "p50_latency_ns"
+aggregate = "p50"

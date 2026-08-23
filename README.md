@@ -14,6 +14,13 @@ The Norn target adapter links the real Norn library.
 The Weir, Loki, and Orda adapters are **faithful self-contained C++ simulators** of each target's documented adversarial surface; they do not yet link the real libraries.
 Ygg behavioral embeddings (novelty search) are not yet wired in.
 
+Campaigns are reproducible: `--seed <n>` flows into the optimizer, workload
+generation, and adapter threads, so the same seed replays the same workloads
+(observed latencies carry real-system timing noise). A canonical head-to-head
+run (random vs CMA-ES vs MAP-Elites, same space/budget/seed against Norn) lives
+in [`experiments/canonical/`](experiments/canonical/README.md) and shows Fenrir
+discovering pathological multi-second tail latencies.
+
 ## Architecture
 
 Rust is the control plane: campaign orchestration, search algorithms, persistence, and the target/trait boundary.
@@ -77,6 +84,7 @@ Search for pathological workloads.
 | `--budget` | `100` | Total evaluations |
 | `--parallel` | `1` | Parallel evaluations |
 | `--duration` | `10` | Seconds per evaluation |
+| `--seed` | `42` | RNG seed for optimizer, workload generation, and adapter threads |
 | `-o, --output` | `experiments/fenrir_hunt` | Campaign directory |
 | `--adapter` | — | Override adapter binary path |
 | `--backend` | `local` | `local` (subprocess) or `kiln` (Kiln runner) |

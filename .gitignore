@@ -6,8 +6,9 @@
 # C++ adapter build directories (keep the .cpp + CMakeLists.txt sources)
 /targets/*/build/
 
-# Campaign / experiment outputs
-/experiments/
+# Campaign / experiment outputs (keep the v0.1 canonical result tracked).
+/experiments/*
+!/experiments/canonical/
 
 # Kiln run artifacts
 .kiln/
