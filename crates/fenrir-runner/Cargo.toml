@@ -1,0 +1,15 @@
+[package]
+name = "fenrir-runner"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+fenrir-core = { path = "../fenrir-core" }
+fenrir-targets = { path = "../fenrir-targets" }
+anyhow = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+tempfile = { workspace = true }
+ulid = { workspace = true }

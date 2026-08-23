@@ -1,0 +1,16 @@
+# Ignore build artifacts, experiment outputs, and local tooling state
+
+# Rust workspace build output
+/target
+
+# C++ adapter build directories (keep the .cpp + CMakeLists.txt sources)
+/targets/*/build/
+
+# Campaign / experiment outputs
+/experiments/
+
+# Kiln run artifacts
+.kiln/
+
+# OS / editor noise
+.DS_Store

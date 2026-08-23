@@ -1,0 +1,62 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/fenrir-core",
+    "crates/fenrir-runner",
+    "crates/fenrir-targets",
+    "crates/fenrir-search",
+    "crates/fenrir-store",
+    "crates/fenrir-cli",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "MIT OR Apache-2.0"
+
+[workspace.dependencies]
+# Core
+anyhow = "1"
+clap = { version = "4.5", features = ["derive", "env"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+
+# Config
+toml = "0.9"
+figment = { version = "0.10", features = ["toml"] }
+
+# Math / Optimization
+rand = { version = "0.8", features = ["small_rng"] }
+rand_distr = "0.4"
+nalgebra = "0.33"
+
+# Data - using JSONL for v0, Parquet later
+# arrow = { version = "51.0", features = ["ipc", "json"] }
+# parquet = { version = "51.0", features = ["snap", "zstd", "arrow"] }
+# polars = { version = "0.37", features = ["lazy", "parquet"] }
+
+# Async / Process
+tokio = { version = "1.38", features = ["rt-multi-thread", "macros", "sync", "process", "fs", "io-util"] }
+tempfile = "3"
+walkdir = "2"
+ulid = { version = "1", features = ["serde"] }
+
+# Benchmarking
+hdrhistogram = "7.5"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+dbg_macro = "deny"
+todo = "deny"
+unimplemented = "deny"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
