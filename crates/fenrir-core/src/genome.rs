@@ -374,3 +374,80 @@ impl SampledGenome {
         self.values.get(path).map(|v| *v as usize)
     }
 }
+
+impl ParameterSpec {
+    /// Decode a sampled *coordinate* into the actual parameter value.
+    ///
+    /// For `Choice`, the search coordinate is an index into `values`
+    /// (CMA-ES/random can produce fractional or out-of-range indices), so we
+    /// round to the nearest choice and clamp. Every other spec passes the
+    /// coordinate through unchanged. This is the missing link between the
+    /// optimizer's coordinate space and the value the target adapter expects.
+    pub fn decode(&self, coord: f64) -> f64 {
+        match self {
+            ParameterSpec::Choice { values } => {
+                if values.is_empty() {
+                    return coord;
+                }
+                let n = values.len() as i64;
+                let mut idx = coord.round() as i64;
+                if idx < 0 {
+                    idx = 0;
+                }
+                if idx >= n {
+                    idx = n - 1;
+                }
+                values[idx as usize].as_f64().unwrap_or(coord)
+            }
+            _ => coord,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn payload_size_spec() -> ParameterSpec {
+        ParameterSpec::Choice {
+            values: vec![
+                serde_json::json!(64),
+                serde_json::json!(128),
+                serde_json::json!(192),
+                serde_json::json!(256),
+                serde_json::json!(512),
+                serde_json::json!(1024),
+            ],
+        }
+    }
+
+    #[test]
+    fn choice_decode_maps_index_to_value() {
+        let spec = payload_size_spec();
+        assert_eq!(spec.decode(0.0), 64.0);
+        assert_eq!(spec.decode(1.0), 128.0);
+        assert_eq!(spec.decode(2.0), 192.0);
+        assert_eq!(spec.decode(3.0), 256.0);
+        assert_eq!(spec.decode(4.0), 512.0);
+        assert_eq!(spec.decode(5.0), 1024.0);
+    }
+
+    #[test]
+    fn choice_decode_rounds_and_clamps() {
+        let spec = payload_size_spec();
+        assert_eq!(spec.decode(2.4), 192.0, "rounds to nearest index");
+        assert_eq!(spec.decode(4.4), 512.0, "rounds to nearest index");
+        assert_eq!(spec.decode(-1.0), 64.0, "clamps below range");
+        assert_eq!(spec.decode(99.0), 1024.0, "clamps above range");
+    }
+
+    #[test]
+    fn non_choice_passes_through() {
+        let spec = ParameterSpec::Range {
+            min: 0.0,
+            max: 1.0,
+            log: false,
+        };
+        assert_eq!(spec.decode(0.5), 0.5);
+    }
+}

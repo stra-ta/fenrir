@@ -67,7 +67,10 @@ impl Target for NornTarget {
         let mut payload = serde_json::Map::new();
         payload.insert("size_distribution".into(), json!("fixed"));
         if let Some(v) = genome.values.get("payload.size") {
-            payload.insert("size".into(), json!(*v as u64));
+            // `payload.size` is a categorical Choice: the sampled coordinate is
+            // an *index* into the choice table, not a raw byte count. Decode it.
+            let decoded = self.default_genome().payload.size.decode(*v);
+            payload.insert("size".into(), json!(decoded as u64));
         }
         payload.insert("key_distribution".into(), json!("uniform"));
         obj.insert("payload".into(), payload.into());
