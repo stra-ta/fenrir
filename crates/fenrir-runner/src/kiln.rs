@@ -19,16 +19,45 @@ use ulid::Ulid;
 
 /// Locate the `kiln` binary, checking in priority order:
 /// 1. `KILN_BIN` environment variable.
-/// 2. The local debug build at the known project path.
+/// 2. A sibling `projects/kiln` checkout in the workspace layout (debug, then
+///    release), resolved from `CARGO_MANIFEST_DIR` and `$HOME`.
 /// 3. `kiln` resolved from `PATH`.
 fn locate_kiln() -> Option<PathBuf> {
     if let Ok(p) = std::env::var("KILN_BIN") {
         return Some(PathBuf::from(p));
     }
-    let debug = PathBuf::from("/Users/nguyenhuyvu/projects/kiln/target/debug/kiln");
-    if debug.exists() {
-        return Some(debug);
+
+    let mut candidates: Vec<PathBuf> = Vec::new();
+    if let Ok(manifest) = std::env::var("CARGO_MANIFEST_DIR") {
+        // This crate lives at <root>/crates/fenrir-runner; Kiln lives at
+        // <root>/projects/kiln.
+        let root = Path::new(&manifest).join("..").join("..");
+        candidates.push(
+            root.join("projects")
+                .join("kiln")
+                .join("target")
+                .join("debug")
+                .join("kiln"),
+        );
+        candidates.push(
+            root.join("projects")
+                .join("kiln")
+                .join("target")
+                .join("release")
+                .join("kiln"),
+        );
     }
+    if let Some(home) = std::env::var_os("HOME") {
+        let base = Path::new(&home).join("projects").join("kiln").join("target");
+        candidates.push(base.join("debug").join("kiln"));
+        candidates.push(base.join("release").join("kiln"));
+    }
+    for c in &candidates {
+        if c.is_file() {
+            return Some(c.clone());
+        }
+    }
+
     if let Some(paths) = std::env::var_os("PATH") {
         for dir in std::env::split_paths(&paths) {
             let candidate = dir.join("kiln");
@@ -71,7 +100,7 @@ pub async fn run_with_kiln(
     // 1. Locate the kiln binary.
     let kiln_bin = locate_kiln().ok_or_else(|| {
         anyhow::anyhow!(
-            "kiln binary not found; build it with `cd /Users/nguyenhuyvu/projects/kiln && cargo build` or set KILN_BIN"
+            "kiln binary not found; build it in the projects/kiln workspace (`cargo build -p kiln`) or set KILN_BIN"
         )
     })?;
 

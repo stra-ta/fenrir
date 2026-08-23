@@ -184,7 +184,7 @@ Built-in objectives: `p99_latency`, `cas_retries`, `tail_amplification`.
 | Optimizer | Status |
 |-----------|--------|
 | `random` | Working |
-| `cmaes` | Working (native CMA-ES with BIPOP restarts) |
+| `cmaes` | Working (native CMA-ES with alternating large/small-population restarts (BIPOP-inspired)) |
 | `bayesian` | Placeholder (falls back to random) |
 | `map-elites` | Working (MAP-Elites quality-diversity over throughput x tail-amplification) |
 

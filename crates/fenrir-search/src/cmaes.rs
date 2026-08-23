@@ -4,9 +4,11 @@ use nalgebra::{DMatrix, DVector};
 use rand::thread_rng;
 use rand_distr::{Distribution, Normal};
 
-/// Maximum number of generations without improvement before a BIPOP restart.
+/// Maximum number of generations without improvement before an alternating
+/// large/small-population restart.
 const MAX_STAGNATION: u64 = 50;
-/// Step-size divisor used for the "small" population restart branch of BIPOP.
+/// Step-size divisor used for the "small" population restart branch (the
+/// alternating large/small-population restart scheme).
 const RESTART_LO_INV: f64 = 8.0;
 
 /// Internal CMA-ES state for a single run (a generation is a population of `lambda`

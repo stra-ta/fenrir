@@ -1,6 +1,6 @@
 use fenrir_core::{Genome, SampledGenome, SearchSpace};
 use serde_json::Value;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 pub mod norn;
 pub mod weir;
@@ -32,10 +32,26 @@ pub trait Target: Send + Sync {
 }
 
 /// Resolve a target by name. Returns `None` for unknown targets.
+///
+/// The adapter binary path is resolved in priority order:
+/// 1. `FENRIR_ADAPTER_DIR` environment variable (directory holding the built
+///    adapters).
+/// 2. A workspace checkout at `<root>/targets/{name}/build/...`, where
+///    `<root>` is derived from `CARGO_MANIFEST_DIR` (this crate lives at
+///    `<root>/crates/fenrir-targets`).
 pub fn get_target(name: &str) -> Option<Box<dyn Target>> {
-    let adapter = PathBuf::from(format!(
-        "/Users/nguyenhuyvu/fenrir/targets/{name}/build/{name}_fenrir_adapter"
-    ));
+    let adapter = if let Ok(dir) = std::env::var("FENRIR_ADAPTER_DIR") {
+        PathBuf::from(dir).join(format!("{name}_fenrir_adapter"))
+    } else {
+        let manifest =
+            std::env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| ".".to_string());
+        // crate lives at <root>/crates/fenrir-targets
+        let root = Path::new(&manifest).join("..").join("..");
+        root.join("targets")
+            .join(name)
+            .join("build")
+            .join(format!("{name}_fenrir_adapter"))
+    };
     match name {
         "norn" => Some(Box::new(norn::NornTarget::new(adapter))),
         "weir" => Some(Box::new(weir::WeirTarget::new(adapter))),
