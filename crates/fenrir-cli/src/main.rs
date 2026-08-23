@@ -1,7 +1,9 @@
 use clap::{Parser, Subcommand};
 use fenrir_core::{Genome, Objective};
 use fenrir_runner::evaluate_genome;
-use fenrir_search::{Evaluation, Optimizer, RandomSearch, CmaEsOptimizer, BayesianOptimizer, MapElitesOptimizer};
+use fenrir_search::{
+    BayesianOptimizer, CmaEsOptimizer, Evaluation, MapElitesOptimizer, Optimizer, RandomSearch,
+};
 use fenrir_store::CampaignStore;
 use fenrir_targets::get_target;
 use figment::providers::{Format, Toml};
@@ -11,7 +13,11 @@ use tokio::sync::Semaphore;
 use tracing::{info, warn};
 
 #[derive(Parser)]
-#[command(name = "fenrir", version, about = "Adversarial workload synthesis engine")]
+#[command(
+    name = "fenrir",
+    version,
+    about = "Adversarial workload synthesis engine"
+)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -48,6 +54,10 @@ enum Commands {
         /// Duration per evaluation (seconds)
         #[arg(long, default_value = "10")]
         duration: u64,
+
+        /// Campaign seed (u64) for reproducible hunts
+        #[arg(long, default_value_t = 42)]
+        seed: u64,
 
         /// Output directory
         #[arg(long, short, default_value = "experiments/fenrir_hunt")]
@@ -90,11 +100,16 @@ async fn main() -> anyhow::Result<()> {
             budget,
             parallel,
             duration,
+            seed,
             output,
             adapter,
             backend,
         } => {
-            hunt(target, genome, objective, optimizer, budget, parallel, duration, output, adapter, backend).await?;
+            hunt(
+                target, genome, objective, optimizer, budget, parallel, duration, seed, output,
+                adapter, backend,
+            )
+            .await?;
         }
         Commands::Analyze { campaign, top } => {
             analyze(campaign, top)?;
@@ -104,6 +119,7 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn hunt(
     target: String,
     genome_path: Option<PathBuf>,
@@ -112,22 +128,25 @@ async fn hunt(
     budget: usize,
     parallel: usize,
     duration: u64,
+    seed: u64,
     output_dir: PathBuf,
     adapter_path: Option<PathBuf>,
     backend: String,
 ) -> anyhow::Result<()> {
-    info!("Starting Fenrir hunt: target={}, budget={}, parallel={}, backend={}", target, budget, parallel, backend);
+    info!(
+        "Starting Fenrir hunt: target={}, budget={}, parallel={}, backend={}",
+        target, budget, parallel, backend
+    );
 
     // Resolve target implementation (owns genome + adapter mapping).
-    let target: Arc<dyn fenrir_targets::Target> = Arc::from(
-        get_target(&target)
-            .ok_or_else(|| anyhow::anyhow!("Unknown target: {}. Known: norn, weir, loki, orda", target))?,
-    );
+    let target: Arc<dyn fenrir_targets::Target> =
+        Arc::from(get_target(&target).ok_or_else(|| {
+            anyhow::anyhow!("Unknown target: {}. Known: norn, weir, loki, orda", target)
+        })?);
 
     // Load genome
     let genome = if let Some(path) = genome_path {
-        figment::Figment::from(Toml::file(&path))
-            .extract::<Genome>()?
+        figment::Figment::from(Toml::file(&path)).extract::<Genome>()?
     } else {
         target.default_genome()
     };
@@ -135,8 +154,7 @@ async fn hunt(
 
     // Load objective
     let objective = if let Some(path) = objective_path {
-        figment::Figment::from(Toml::file(&path))
-            .extract::<Objective>()?
+        figment::Figment::from(Toml::file(&path)).extract::<Objective>()?
     } else {
         Objective::default()
     };
@@ -144,7 +162,10 @@ async fn hunt(
     // Determine adapter path (used for existence check in local backend).
     let resolved_adapter = adapter_path.unwrap_or_else(|| target.adapter_path());
     if backend == "local" && !resolved_adapter.exists() {
-        anyhow::bail!("Adapter not found at {:?}. Build it first.", resolved_adapter);
+        anyhow::bail!(
+            "Adapter not found at {:?}. Build it first.",
+            resolved_adapter
+        );
     }
     // Create output directory
     std::fs::create_dir_all(&output_dir)?;
@@ -157,10 +178,10 @@ async fn hunt(
     info!("Search space dimension: {}", search_space.dimension());
 
     let mut optimizer: Box<dyn Optimizer> = match optimizer_name.as_str() {
-        "random" => Box::new(RandomSearch::new(search_space, budget)),
-        "cmaes" => Box::new(CmaEsOptimizer::new(search_space, budget)),
-        "bayesian" => Box::new(BayesianOptimizer::new(search_space, budget)),
-        "map-elites" => Box::new(MapElitesOptimizer::new(search_space, budget)),
+        "random" => Box::new(RandomSearch::new(genome.search_space(), budget, seed)),
+        "cmaes" => Box::new(CmaEsOptimizer::new(genome.search_space(), budget, seed)),
+        "bayesian" => Box::new(BayesianOptimizer::new(genome.search_space(), budget, seed)),
+        "map-elites" => Box::new(MapElitesOptimizer::new(genome.search_space(), budget, seed)),
         _ => anyhow::bail!("Unknown optimizer: {}", optimizer_name),
     };
 
@@ -191,6 +212,8 @@ async fn hunt(
 
             iteration += 1;
 
+            let eval_seed = seed.wrapping_add(iter.wrapping_mul(0x9E3779B97F4A7C15u64));
+
             let handle = tokio::spawn(async move {
                 let permit = semaphore.acquire().await;
                 let _permit = match permit {
@@ -199,9 +222,10 @@ async fn hunt(
                 };
                 let observation = match backend.as_str() {
                     "kiln" => {
-                        fenrir_runner::kiln::run_with_kiln(&*target, &genome, duration).await
+                        fenrir_runner::kiln::run_with_kiln(&*target, &genome, duration, eval_seed)
+                            .await
                     }
-                    _ => evaluate_genome(&*target, &genome, duration).await,
+                    _ => evaluate_genome(&*target, &genome, duration, eval_seed).await,
                 };
                 match observation {
                     Ok(observation) => {
@@ -226,8 +250,12 @@ async fn hunt(
         for handle in handles {
             match handle.await {
                 Ok((Some(eval), None)) => {
-                    info!("Iteration {}: score={:.4}, feasible={}", 
-                          eval.iteration, eval.score.value(), eval.score.feasible());
+                    info!(
+                        "Iteration {}: score={:.4}, feasible={}",
+                        eval.iteration,
+                        eval.score.value(),
+                        eval.score.feasible()
+                    );
                     store.append(&eval)?;
                     evaluations.push(eval);
                 }
@@ -255,16 +283,25 @@ async fn hunt(
     // Print summary
     let all = store.load_all()?;
     let feasible: Vec<_> = all.iter().filter(|e| e.score.feasible()).collect();
-    
-    info!("Campaign complete. Total evaluations: {}, Feasible: {}", all.len(), feasible.len());
-    
+
+    info!(
+        "Campaign complete. Total evaluations: {}, Feasible: {}",
+        all.len(),
+        feasible.len()
+    );
+
     if !feasible.is_empty() {
         let mut sorted = feasible.clone();
         sorted.sort_by(|a, b| b.score.value().partial_cmp(&a.score.value()).unwrap());
-        
+
         info!("Top 5 pathological workloads:");
         for (i, eval) in sorted.iter().take(5).enumerate() {
-            info!("  {}: score={:.4} genome={:?}", i+1, eval.score.value(), eval.genome.values);
+            info!(
+                "  {}: score={:.4} genome={:?}",
+                i + 1,
+                eval.score.value(),
+                eval.genome.values
+            );
         }
     }
 
@@ -273,24 +310,24 @@ async fn hunt(
 
 fn analyze(campaign_dir: PathBuf, top: usize) -> anyhow::Result<()> {
     let evaluations = CampaignStore::load_from_jsonl(campaign_dir.join("evaluations.jsonl"))?;
-    
+
     let feasible: Vec<_> = evaluations.iter().filter(|e| e.score.feasible()).collect();
-    
+
     println!("Total evaluations: {}", evaluations.len());
     println!("Feasible: {}", feasible.len());
-    
+
     if !feasible.is_empty() {
         let mut sorted = feasible;
         sorted.sort_by(|a, b| b.score.value().partial_cmp(&a.score.value()).unwrap());
-        
+
         println!("\nTop {} pathological workloads:", top);
         for (i, eval) in sorted.iter().take(top).enumerate() {
-            println!("  {}: score={:.4}", i+1, eval.score.value());
+            println!("  {}: score={:.4}", i + 1, eval.score.value());
             for (key, val) in &eval.genome.values {
                 println!("    {}: {}", key, val);
             }
         }
     }
-    
+
     Ok(())
 }

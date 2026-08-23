@@ -4,7 +4,7 @@ use fenrir_core::genome::{
     SizeDistribution, TopologyGenome, TrafficGenome,
 };
 use fenrir_core::{Genome, SampledGenome};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::path::PathBuf;
 
 /// Fenrir target for the Orda matching-engine / order-book.

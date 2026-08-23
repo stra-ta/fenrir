@@ -4,7 +4,7 @@ use fenrir_core::genome::{
     PayloadGenome, SizeDistribution, TopologyGenome, TrafficGenome,
 };
 use fenrir_core::{Genome, SampledGenome};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::path::PathBuf;
 

@@ -1,7 +1,8 @@
 use crate::{Evaluation, Optimizer};
 use fenrir_core::{SampledGenome, SearchSpace};
 use nalgebra::{DMatrix, DVector};
-use rand::thread_rng;
+use rand::SeedableRng;
+use rand::rngs::StdRng;
 use rand_distr::{Distribution, Normal};
 
 /// Maximum number of generations without improvement before an alternating
@@ -38,6 +39,9 @@ pub struct CmaEsOptimizer {
     budget: usize,
     evaluations: usize,
 
+    /// Seeded RNG derived from the campaign seed.
+    rng: StdRng,
+
     /// The (possibly restarted) CMA-ES state.
     state: Option<CmaState>,
 
@@ -59,7 +63,7 @@ pub struct CmaEsOptimizer {
 }
 
 impl CmaEsOptimizer {
-    pub fn new(space: SearchSpace, budget: usize) -> Self {
+    pub fn new(space: SearchSpace, budget: usize, seed: u64) -> Self {
         let n = space.dimension();
         let center = DVector::from_fn(n, |i, _| {
             let (lo, hi) = space.bounds[i];
@@ -76,6 +80,7 @@ impl CmaEsOptimizer {
             space,
             budget,
             evaluations: 0,
+            rng: StdRng::seed_from_u64(seed),
             state: None,
             buffer: Vec::new(),
             center,
@@ -103,8 +108,8 @@ impl CmaEsOptimizer {
         let cc = (4.0 + mueff / nf) / (nf + 4.0 + 2.0 * mueff / nf);
         let cs = (mueff + 2.0) / (nf + mueff + 5.0);
         let c1 = 2.0 / ((nf + 1.3).powi(2) + mueff);
-        let cmu = (2.0 * (mueff - 2.0 + 1.0 / mueff) / ((nf + 2.0).powi(2) + 2.0 * mueff))
-            .min(1.0 - c1);
+        let cmu =
+            (2.0 * (mueff - 2.0 + 1.0 / mueff) / ((nf + 2.0).powi(2) + 2.0 * mueff)).min(1.0 - c1);
         let damps = 1.0 + 2.0 * ((mueff - 1.0) / (nf + 1.0)).max(0.0).sqrt() + cs;
         let chi_n = nf.sqrt() * (1.0 - 1.0 / (4.0 * nf) + 1.0 / (21.0 * nf * nf));
 
@@ -163,7 +168,10 @@ impl CmaEsOptimizer {
         let (sigma, lambda) = if self.restart_large {
             (self.init_sigma * 2.0, self.base_lambda)
         } else {
-            (self.init_sigma / RESTART_LO_INV, (self.base_lambda / 2).max(4))
+            (
+                self.init_sigma / RESTART_LO_INV,
+                (self.base_lambda / 2).max(4),
+            )
         };
         self.state = Some(self.make_state(&self.center, sigma, lambda));
         self.stagnation = 0;
@@ -183,7 +191,7 @@ impl CmaEsOptimizer {
         sorted.sort_by(|a, b| b.1.total_cmp(&a.1));
 
         let gen_best = sorted[0].1;
-        if self.best_score.map_or(true, |b| gen_best > b) {
+        if self.best_score.is_none_or(|b| gen_best > b) {
             self.best_score = Some(gen_best);
             self.stagnation = 0;
         } else {
@@ -198,8 +206,8 @@ impl CmaEsOptimizer {
 
         // New mean: weighted combination of the `mu` best candidates.
         let mut mean_new = DVector::zeros(n);
-        for i in 0..mu {
-            mean_new = mean_new + sorted[i].0.clone() * st.weights[i];
+        for (i, item) in sorted.iter().enumerate().take(mu) {
+            mean_new += item.0.clone() * st.weights[i];
         }
         let y_w = (&mean_new - &mean_old) / st.sigma;
 
@@ -217,8 +225,7 @@ impl CmaEsOptimizer {
         let damps = st.damps;
         let chi_n = st.chi_n;
 
-        let ps_new =
-            (1.0 - cs) * st.ps.clone() + (cs * (2.0 - cs) * mueff).sqrt() * invsqrt_yw;
+        let ps_new = (1.0 - cs) * st.ps.clone() + (cs * (2.0 - cs) * mueff).sqrt() * invsqrt_yw;
         let ps_norm = ps_new.norm();
 
         let t = st.gen_count as f64 + 1.0;
@@ -229,15 +236,15 @@ impl CmaEsOptimizer {
             0.0
         };
 
-        let pc_new = (1.0 - cc) * st.pc.clone()
-            + hsig * (cc * (2.0 - cc) * mueff).sqrt() * y_w.clone();
+        let pc_new =
+            (1.0 - cc) * st.pc.clone() + hsig * (cc * (2.0 - cc) * mueff).sqrt() * y_w.clone();
 
         // Covariance update: rank-one (pc) + rank-mu (weighted y_i y_i^T).
         let mut c_new = st.c.clone() * (1.0 - c1 - cmu);
-        c_new = c_new + pc_new.clone() * pc_new.clone().transpose() * c1;
-        for i in 0..mu {
-            let y_i = (&sorted[i].0 - &mean_old) / st.sigma;
-            c_new = c_new + y_i.clone() * y_i.clone().transpose() * (cmu * st.weights[i]);
+        c_new += pc_new.clone() * pc_new.clone().transpose() * c1;
+        for (i, item) in sorted.iter().enumerate().take(mu) {
+            let y_i = (&item.0 - &mean_old) / st.sigma;
+            c_new += y_i.clone() * y_i.clone().transpose() * (cmu * st.weights[i]);
         }
         // Keep the matrix positive-definite.
         c_new += DMatrix::from_diagonal(&DVector::from_element(n, 1e-12));
@@ -262,7 +269,7 @@ impl Optimizer for CmaEsOptimizer {
             self.init_state();
         }
 
-        let mut rng = thread_rng();
+        let mut rng = &mut self.rng;
         let v = sample_point(self.state.as_ref().unwrap(), &mut rng);
         let genome = self.to_genome(&v);
         self.evaluations += 1;

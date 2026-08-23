@@ -85,6 +85,7 @@ struct Config {
     int duration_sec = 10;
     int warmup_sec = 2;
     std::string output_path;
+    uint64_t seed = 0;
 };
 
 Config parse_genome(const json& genome_json) {
@@ -117,6 +118,7 @@ Config parse_genome(const json& genome_json) {
     cfg.duration_sec = genome_json.value("duration_sec", 10);
     cfg.warmup_sec = genome_json.value("warmup_sec", 2);
     cfg.output_path = genome_json.value("output_path", "");
+    cfg.seed = genome_json.value("seed", 0ULL);
     return cfg;
 }
 
@@ -182,9 +184,7 @@ void producer_thread(
 ) {
     apply_affinity(cfg.topology.affinity, thread_id);
 
-    std::mt19937_64 rng(static_cast<uint64_t>(
-        std::chrono::steady_clock::now().time_since_epoch().count()) ^
-        static_cast<uint64_t>(thread_id) * 0x9E3779B97F4A7C15ULL);
+    std::mt19937_64 rng(cfg.seed ^ (static_cast<uint64_t>(thread_id) * 0x9E3779B97F4A7C15ULL));
     std::normal_distribution<double> normal_dist(0.0, 1.0);
     std::uniform_real_distribution<double> uniform01(0.0, 1.0);
 

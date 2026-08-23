@@ -106,17 +106,21 @@ impl ObjectiveExpr {
                 let value = observation.metrics.get_metric(name, *aggregate);
                 Score(value.unwrap_or(f64::MIN))
             }
-            ObjectiveExpr::Composite { weights, objectives } => {
+            ObjectiveExpr::Composite {
+                weights,
+                objectives,
+            } => {
                 let mut total = 0.0;
                 for obj in objectives {
-                    total += weights
-                        .get(&format!("{:?}", obj))
-                        .unwrap_or(&1.0)
+                    total += weights.get(&format!("{:?}", obj)).unwrap_or(&1.0)
                         * obj.evaluate(observation).0;
                 }
                 Score(total)
             }
-            ObjectiveExpr::Ratio { numerator, denominator } => {
+            ObjectiveExpr::Ratio {
+                numerator,
+                denominator,
+            } => {
                 let num = numerator.evaluate(observation).0;
                 let den = denominator.evaluate(observation).0;
                 if den == 0.0 {

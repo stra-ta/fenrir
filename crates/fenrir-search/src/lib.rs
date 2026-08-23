@@ -1,12 +1,12 @@
-pub mod random;
-pub mod cmaes;
 pub mod bayesian;
+pub mod cmaes;
 pub mod map_elites;
+pub mod random;
 
-pub use random::RandomSearch;
-pub use cmaes::CmaEsOptimizer;
 pub use bayesian::BayesianOptimizer;
+pub use cmaes::CmaEsOptimizer;
 pub use map_elites::MapElitesOptimizer;
+pub use random::RandomSearch;
 
 use fenrir_core::{Observation, SampledGenome, Score};
 

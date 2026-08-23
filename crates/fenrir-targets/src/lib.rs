@@ -2,10 +2,10 @@ use fenrir_core::{Genome, SampledGenome, SearchSpace};
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 
-pub mod norn;
-pub mod weir;
 pub mod loki;
+pub mod norn;
 pub mod orda;
+pub mod weir;
 
 /// A Fenrir evaluation target (e.g. Norn, Weir, Loki, Orda).
 ///
@@ -43,8 +43,7 @@ pub fn get_target(name: &str) -> Option<Box<dyn Target>> {
     let adapter = if let Ok(dir) = std::env::var("FENRIR_ADAPTER_DIR") {
         PathBuf::from(dir).join(format!("{name}_fenrir_adapter"))
     } else {
-        let manifest =
-            std::env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| ".".to_string());
+        let manifest = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| ".".to_string());
         // crate lives at <root>/crates/fenrir-targets
         let root = Path::new(&manifest).join("..").join("..");
         root.join("targets")

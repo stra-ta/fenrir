@@ -1,6 +1,8 @@
 use crate::{Evaluation, Optimizer};
 use fenrir_core::{Observation, SampledGenome, Score, SearchSpace};
 use rand::Rng;
+use rand::SeedableRng;
+use rand::rngs::StdRng;
 use rand_distr::{Distribution, Normal};
 use std::collections::HashMap;
 
@@ -41,16 +43,19 @@ pub struct MapElitesOptimizer {
     space: SearchSpace,
     budget: usize,
     evaluations: usize,
+    /// Seeded RNG derived from the campaign seed.
+    rng: StdRng,
     /// cell (throughput_bin, tail_bin) -> (best_score, elite_genome)
     archive: HashMap<(usize, usize), (Score, SampledGenome)>,
 }
 
 impl MapElitesOptimizer {
-    pub fn new(space: SearchSpace, budget: usize) -> Self {
+    pub fn new(space: SearchSpace, budget: usize, seed: u64) -> Self {
         Self {
             space,
             budget,
             evaluations: 0,
+            rng: StdRng::seed_from_u64(seed),
             archive: HashMap::new(),
         }
     }
@@ -89,22 +94,22 @@ impl MapElitesOptimizer {
 
     /// Gaussian-perturb an elite genome, mimicking `cmaes.rs`'s `to_genome`
     /// rounding so categorical indices stay integers.
-    fn perturb(&self, elite: &SampledGenome, rng: &mut impl Rng) -> SampledGenome {
-        let mut v = self.space.to_vector(elite);
+    fn perturb(space: &SearchSpace, elite: &SampledGenome, rng: &mut impl Rng) -> SampledGenome {
+        let mut v = space.to_vector(elite);
         let normal = Normal::new(0.0, 1.0).expect("standard normal is always valid");
-        for i in 0..self.space.dimension() {
-            let (lo, hi) = self.space.bounds[i];
+        for i in 0..space.dimension() {
+            let (lo, hi) = space.bounds[i];
             let sigma = PERTURB_FRACTION * (hi - lo).max(1e-9);
             v[i] += normal.sample(rng) * sigma;
         }
         // Repaired point: clip then round categorical indices, exactly as in
         // cmaes.rs to_genome.
-        self.space.clip(&mut v);
-        for &i in &self.space.categorical_indices {
-            let (lo, hi) = self.space.bounds[i];
+        space.clip(&mut v);
+        for &i in &space.categorical_indices {
+            let (lo, hi) = space.bounds[i];
             v[i] = v[i].round().clamp(lo, hi);
         }
-        self.space.from_vector(&v)
+        space.from_vector(&v)
     }
 
     /// Number of occupied archive cells (for diagnostics / tests).
@@ -128,13 +133,13 @@ impl Optimizer for MapElitesOptimizer {
         if self.evaluations >= self.budget {
             return vec![];
         }
-        let mut rng = rand::thread_rng();
+        let mut rng = &mut self.rng;
 
         let candidate = if !self.archive.is_empty() && !rng.gen_bool(RANDOM_PROB) {
             // Pick a random elite and perturb it.
             let cells: Vec<(usize, usize)> = self.archive.keys().copied().collect();
             let pick = &self.archive[&cells[rng.gen_range(0..cells.len())]];
-            self.perturb(&pick.1, &mut rng)
+            Self::perturb(&self.space, &pick.1, &mut rng)
         } else {
             // Uniform random exploration.
             self.space.random_sample(&mut rng)
@@ -160,8 +165,7 @@ impl Optimizer for MapElitesOptimizer {
                 None => true,
             };
             if improved {
-                self.archive
-                    .insert(cell, (ev.score, ev.genome.clone()));
+                self.archive.insert(cell, (ev.score, ev.genome.clone()));
             }
         }
         self.evaluations += evaluations.len();
@@ -181,7 +185,7 @@ mod tests {
     #[test]
     fn archive_is_illuminated_and_nonempty() {
         let space = fenrir_core::Genome::default_norn().search_space();
-        let mut opt = MapElitesOptimizer::new(space, 40);
+        let mut opt = MapElitesOptimizer::new(space, 40, 42);
 
         let mut rng = rand::thread_rng();
 
@@ -202,8 +206,10 @@ mod tests {
             application.insert("p50_latency_ns".to_string(), MetricValue::Scalar(p50));
             application.insert("p99_latency_ns".to_string(), MetricValue::Scalar(p99));
 
-            let mut metrics = Metrics::default();
-            metrics.application = application;
+            let metrics = Metrics {
+                application,
+                ..Default::default()
+            };
 
             let observation = Observation {
                 run_id: "t".into(),

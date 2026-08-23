@@ -1,9 +1,9 @@
-pub mod local;
 pub mod kiln;
+pub mod local;
 
+use anyhow::Result;
 use fenrir_core::{Observation, SampledGenome};
 use fenrir_targets::Target;
-use anyhow::Result;
 
 /// Evaluate a single genome against a target using the local subprocess adapter.
 ///
@@ -13,6 +13,7 @@ pub async fn evaluate_genome(
     target: &dyn Target,
     genome: &SampledGenome,
     duration_sec: u64,
+    seed: u64,
 ) -> Result<Observation> {
-    local::run_adapter(target, genome, duration_sec).await
+    local::run_adapter(target, genome, duration_sec, seed).await
 }

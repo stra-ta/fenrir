@@ -125,15 +125,34 @@ impl Genome {
     pub fn default_norn() -> Self {
         Self {
             topology: TopologyGenome {
-                producers: ParameterSpec::Range { min: 1.0, max: 32.0, log: false },
-                consumers: ParameterSpec::Range { min: 1.0, max: 32.0, log: false },
+                producers: ParameterSpec::Range {
+                    min: 1.0,
+                    max: 32.0,
+                    log: false,
+                },
+                consumers: ParameterSpec::Range {
+                    min: 1.0,
+                    max: 32.0,
+                    log: false,
+                },
                 affinity: AffinitySpec::Core,
             },
             traffic: TrafficGenome {
                 arrival_process: ArrivalProcess::Poisson,
-                rate: ParameterSpec::LogUniform { min: 10_000.0, max: 5_000_000.0 },
-                burstiness: ParameterSpec::Range { min: 0.0, max: 1.0, log: false },
-                correlation: ParameterSpec::Range { min: 0.0, max: 1.0, log: false },
+                rate: ParameterSpec::LogUniform {
+                    min: 10_000.0,
+                    max: 5_000_000.0,
+                },
+                burstiness: ParameterSpec::Range {
+                    min: 0.0,
+                    max: 1.0,
+                    log: false,
+                },
+                correlation: ParameterSpec::Range {
+                    min: 0.0,
+                    max: 1.0,
+                    log: false,
+                },
             },
             payload: PayloadGenome {
                 size_distribution: SizeDistribution::Fixed,
@@ -150,9 +169,19 @@ impl Genome {
                 key_distribution: KeyDistribution::Uniform,
             },
             behavior: BehaviorGenome {
-                read_write_ratio: ParameterSpec::Range { min: 0.0, max: 1.0, log: false },
-                lifetime_ns: ParameterSpec::LogUniform { min: 1_000.0, max: 10_000_000.0 },
-                think_time_ns: ParameterSpec::LogUniform { min: 1.0, max: 100_000.0 },
+                read_write_ratio: ParameterSpec::Range {
+                    min: 0.0,
+                    max: 1.0,
+                    log: false,
+                },
+                lifetime_ns: ParameterSpec::LogUniform {
+                    min: 1_000.0,
+                    max: 10_000_000.0,
+                },
+                think_time_ns: ParameterSpec::LogUniform {
+                    min: 1.0,
+                    max: 100_000.0,
+                },
             },
             faults: None,
         }
@@ -185,7 +214,12 @@ impl PayloadGenome {
 
 impl BehaviorGenome {
     fn validate(&self) -> Result<(), GenomeError> {
-        validate_bounded(&self.read_write_ratio, 0.0, 1.0, "behavior.read_write_ratio")?;
+        validate_bounded(
+            &self.read_write_ratio,
+            0.0,
+            1.0,
+            "behavior.read_write_ratio",
+        )?;
         validate_positive(&self.lifetime_ns, "behavior.lifetime_ns")?;
         validate_nonnegative(&self.think_time_ns, "behavior.think_time_ns")?;
         Ok(())
@@ -206,13 +240,13 @@ impl FaultGenome {
 fn validate_positive(spec: &ParameterSpec, path: &str) -> Result<(), GenomeError> {
     match spec {
         ParameterSpec::Fixed { value } => {
-            if let Some(n) = value.as_f64() {
-                if n <= 0.0 {
-                    return Err(GenomeError::InvalidParameter {
-                        path: path.into(),
-                        reason: "must be positive".into(),
-                    });
-                }
+            if let Some(n) = value.as_f64()
+                && n <= 0.0
+            {
+                return Err(GenomeError::InvalidParameter {
+                    path: path.into(),
+                    reason: "must be positive".into(),
+                });
             }
         }
         ParameterSpec::Range { min, .. }
@@ -229,13 +263,13 @@ fn validate_positive(spec: &ParameterSpec, path: &str) -> Result<(), GenomeError
         }
         ParameterSpec::Choice { values } => {
             for v in values {
-                if let Some(n) = v.as_f64() {
-                    if n <= 0.0 {
-                        return Err(GenomeError::InvalidParameter {
-                            path: path.into(),
-                            reason: "all choice values must be positive".into(),
-                        });
-                    }
+                if let Some(n) = v.as_f64()
+                    && n <= 0.0
+                {
+                    return Err(GenomeError::InvalidParameter {
+                        path: path.into(),
+                        reason: "all choice values must be positive".into(),
+                    });
                 }
             }
         }
@@ -247,13 +281,13 @@ fn validate_positive(spec: &ParameterSpec, path: &str) -> Result<(), GenomeError
 fn validate_nonnegative(spec: &ParameterSpec, path: &str) -> Result<(), GenomeError> {
     match spec {
         ParameterSpec::Fixed { value } => {
-            if let Some(n) = value.as_f64() {
-                if n < 0.0 {
-                    return Err(GenomeError::InvalidParameter {
-                        path: path.into(),
-                        reason: "must be non-negative".into(),
-                    });
-                }
+            if let Some(n) = value.as_f64()
+                && n < 0.0
+            {
+                return Err(GenomeError::InvalidParameter {
+                    path: path.into(),
+                    reason: "must be non-negative".into(),
+                });
             }
         }
         ParameterSpec::Range { min, .. }
@@ -270,13 +304,13 @@ fn validate_nonnegative(spec: &ParameterSpec, path: &str) -> Result<(), GenomeEr
         }
         ParameterSpec::Choice { values } => {
             for v in values {
-                if let Some(n) = v.as_f64() {
-                    if n < 0.0 {
-                        return Err(GenomeError::InvalidParameter {
-                            path: path.into(),
-                            reason: "all choice values must be non-negative".into(),
-                        });
-                    }
+                if let Some(n) = v.as_f64()
+                    && n < 0.0
+                {
+                    return Err(GenomeError::InvalidParameter {
+                        path: path.into(),
+                        reason: "all choice values must be non-negative".into(),
+                    });
                 }
             }
         }
@@ -293,22 +327,20 @@ fn validate_bounded(
 ) -> Result<(), GenomeError> {
     match spec {
         ParameterSpec::Fixed { value } => {
-            if let Some(n) = value.as_f64() {
-                if n < min_allowed || n > max_allowed {
-                    return Err(GenomeError::InvalidParameter {
-                        path: path.into(),
-                        reason: format!("must be in [{}, {}]", min_allowed, max_allowed),
-                    });
-                }
-            }
-        }
-        ParameterSpec::Range { min, max, .. } => {
-            if *min < min_allowed || *max > max_allowed {
+            if let Some(n) = value.as_f64()
+                && (n < min_allowed || n > max_allowed)
+            {
                 return Err(GenomeError::InvalidParameter {
                     path: path.into(),
-                    reason: format!("range must be within [{}, {}]", min_allowed, max_allowed),
+                    reason: format!("must be in [{}, {}]", min_allowed, max_allowed),
                 });
             }
+        }
+        ParameterSpec::Range { min, max, .. } if *min < min_allowed || *max > max_allowed => {
+            return Err(GenomeError::InvalidParameter {
+                path: path.into(),
+                reason: format!("range must be within [{}, {}]", min_allowed, max_allowed),
+            });
         }
         _ => {}
     }

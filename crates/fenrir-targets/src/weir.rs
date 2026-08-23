@@ -1,6 +1,6 @@
 use crate::Target;
 use fenrir_core::{Genome, SampledGenome};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::path::PathBuf;
 
 pub struct WeirTarget {

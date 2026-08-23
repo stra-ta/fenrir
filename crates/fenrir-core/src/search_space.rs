@@ -119,7 +119,7 @@ impl SearchSpace {
         prefix: &str,
         names: &mut Vec<String>,
         bounds: &mut Vec<(f64, f64)>,
-        discrete: &mut Vec<usize>,
+        _discrete: &mut Vec<usize>,
         categorical: &mut Vec<usize>,
         types: &mut Vec<ParamType>,
     ) {
@@ -132,12 +132,35 @@ impl SearchSpace {
                         if let Some(type_str) = type_val.as_str() {
                             let idx = names.len();
                             names.push(path);
-                            Self::extract_param_spec_from_type(type_str, val, idx, bounds, types, categorical);
+                            Self::extract_param_spec_from_type(
+                                type_str,
+                                val,
+                                idx,
+                                bounds,
+                                types,
+                                categorical,
+                            );
                         } else {
-                            Self::extract_from_json(val, &path, names, bounds, discrete, categorical, types);
+                            Self::extract_from_json(
+                                val,
+                                &path,
+                                names,
+                                bounds,
+                                _discrete,
+                                categorical,
+                                types,
+                            );
                         }
                     } else {
-                        Self::extract_from_json(val, &path, names, bounds, discrete, categorical, types);
+                        Self::extract_from_json(
+                            val,
+                            &path,
+                            names,
+                            bounds,
+                            _discrete,
+                            categorical,
+                            types,
+                        );
                     }
                 }
             }
@@ -162,7 +185,10 @@ impl SearchSpace {
             "Range" => {
                 let min = spec_obj.get("min").and_then(|v| v.as_f64()).unwrap_or(0.0);
                 let max = spec_obj.get("max").and_then(|v| v.as_f64()).unwrap_or(1.0);
-                let log = spec_obj.get("log").and_then(|v| v.as_bool()).unwrap_or(false);
+                let log = spec_obj
+                    .get("log")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
                 bounds.push((min, max));
                 types.push(if log {
                     ParamType::LogContinuous

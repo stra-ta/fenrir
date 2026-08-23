@@ -1,5 +1,5 @@
-use fenrir_search::Evaluation;
 use anyhow::{Context, Result};
+use fenrir_search::Evaluation;
 use serde_json;
 use std::fs::{File, OpenOptions};
 use std::io::{BufWriter, Write};
@@ -23,7 +23,10 @@ impl CampaignStore {
             .context("Failed to open JSONL file")?;
         let jsonl_file = Some(BufWriter::new(file));
 
-        Ok(Self { jsonl_file, jsonl_path })
+        Ok(Self {
+            jsonl_file,
+            jsonl_path,
+        })
     }
 
     pub fn append(&mut self, eval: &Evaluation) -> Result<()> {
