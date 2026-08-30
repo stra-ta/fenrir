@@ -5,33 +5,35 @@ on:
     branches: [main]
   pull_request:
 
-env:
-  CARGO_TERM_COLOR: always
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   rust:
-    name: Rust (fmt, clippy, test)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
         with:
+          toolchain: 1.97.1
           components: rustfmt, clippy
-      - name: Format check
-        run: cargo fmt --all --check
-      - name: Clippy
-        run: cargo clippy --workspace -- -D warnings
-      - name: Test
-        run: cargo test --workspace
+      - uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c # v2
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+      - run: cargo test --workspace --all-features --locked
+      - run: cargo build --workspace --release --locked
 
-  norn-adapter:
-    name: Norn C++ adapter (-Werror)
-    runs-on: ubuntu-latest
+  model-adapters:
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - name: Install build deps
-        run: sudo apt-get update && sudo apt-get install -y cmake ninja-build nlohmann-json3-dev
-      - name: Configure
-        run: cmake -S targets/norn -B targets/norn/build -G Ninja
-      - name: Build (warnings as errors)
-        run: cmake --build targets/norn/build
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - run: sudo apt-get update && sudo apt-get install -y cmake ninja-build nlohmann-json3-dev
+      - run: |
+          for target in norn weir loki orda; do
+            cmake -S "targets/$target" -B "targets/$target/build" -G Ninja
+            cmake --build "targets/$target/build"
+          done
