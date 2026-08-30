@@ -151,8 +151,8 @@ int main(int argc, char** argv) {
     Config cfg = parse_genome(genome_json);
     cfg.duration_sec = duration_sec;
 
-    // ---- Deterministic seeded RNG (seeded from the genome for repeatability) ----
-    uint64_t seed = 0x10c0ffee;
+    // ---- Deterministic seeded RNG (seeded by the runner) ----
+    uint64_t seed = genome_json.value("seed", 0ULL);
     seed ^= static_cast<uint64_t>(cfg.traffic.rate);
     seed ^= static_cast<uint64_t>(cfg.faults.fault_probability * 1'000'000.0);
     seed ^= static_cast<uint64_t>(cfg.faults.latency_mean_ns);
@@ -293,6 +293,8 @@ int main(int argc, char** argv) {
 
     observation["metrics"]["hardware"]["cycles"] = nullptr;
     observation["metrics"]["os"]["context_switches"] = nullptr;
+    observation["metadata"]["seed"] = seed;
+    observation["metadata"]["adapter"] = "loki-synthetic";
 
     std::cout << observation.dump(2) << "\n";
     return 0;

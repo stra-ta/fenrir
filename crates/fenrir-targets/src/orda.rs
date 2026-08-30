@@ -37,6 +37,7 @@ impl Target for OrdaTarget {
         // `Genome::validate()` (which requires all choice values to be positive)
         // passes; the adapter keys off the index, not the stored value.
         Genome {
+            schema_version: fenrir_core::genome::CURRENT_SCHEMA_VERSION,
             topology: TopologyGenome {
                 producers: ParameterSpec::Range {
                     min: 1.0,

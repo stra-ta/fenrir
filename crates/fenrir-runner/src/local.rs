@@ -125,6 +125,65 @@ pub(crate) fn extract_metrics(output: &Value) -> Result<Metrics> {
         }
     }
 
+    // Ygg and other instrumentation producers may add a namespaced scalar
+    // block.  Preserve the namespace in the metric name so objectives can
+    // opt into it explicitly (`ygg.embedding_novelty`, for example).
+    if let Some(ygg) = output.get("metrics").and_then(|m| m.get("ygg"))
+        && let Some(obj) = ygg.as_object()
+    {
+        for (key, value) in obj {
+            if let Some(f) = value.as_f64() {
+                metrics
+                    .application
+                    .insert(format!("ygg.{key}"), MetricValue::Scalar(f));
+                if key == "embedding_novelty" {
+                    metrics.ygg_novelty = Some(f);
+                }
+            } else if key == "embedding" {
+                if let Some(values) = value.as_array() {
+                    let embedding: Vec<f32> = values
+                        .iter()
+                        .filter_map(Value::as_f64)
+                        .map(|value| value as f32)
+                        .collect();
+                    if !embedding.is_empty() && embedding.len() == values.len() {
+                        metrics.ygg_embedding = Some(embedding);
+                    }
+                }
+            } else if key == "regime" {
+                metrics.ygg_regime = value.as_str().map(ToString::to_string);
+            }
+        }
+    }
+
+    if let Some(path) = output
+        .get("metrics")
+        .and_then(|m| m.get("trace_path"))
+        .and_then(Value::as_str)
+        .or_else(|| {
+            output
+                .get("artifacts")
+                .and_then(|a| a.get("trace_path"))
+                .and_then(Value::as_str)
+        })
+    {
+        metrics.trace_path = Some(path.to_string());
+    }
+
+    if let Some(metadata) = output.get("metadata").and_then(Value::as_object) {
+        for (key, value) in metadata {
+            if let Some(value) = value.as_str() {
+                metrics.metadata.insert(key.clone(), value.to_string());
+            } else if let Some(value) = value.as_i64() {
+                metrics.metadata.insert(key.clone(), value.to_string());
+            } else if let Some(value) = value.as_f64() {
+                metrics.metadata.insert(key.clone(), value.to_string());
+            } else if let Some(value) = value.as_bool() {
+                metrics.metadata.insert(key.clone(), value.to_string());
+            }
+        }
+    }
+
     metrics.hardware = HardwareCounters::default();
     metrics.os = OsMetrics::default();
 

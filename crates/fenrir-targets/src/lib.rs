@@ -31,6 +31,47 @@ pub trait Target: Send + Sync {
     fn genome_to_adapter_input(&self, genome: &SampledGenome) -> Value;
 }
 
+/// Target wrapper used for explicit adapter overrides.
+///
+/// Keeping the override at the target boundary makes `--adapter` effective
+/// for both local and Kiln backends without teaching runners about each target
+/// implementation.
+struct AdapterOverride {
+    inner: Box<dyn Target>,
+    adapter_path: PathBuf,
+}
+
+impl Target for AdapterOverride {
+    fn name(&self) -> &str {
+        self.inner.name()
+    }
+
+    fn default_genome(&self) -> Genome {
+        self.inner.default_genome()
+    }
+
+    fn search_space(&self) -> SearchSpace {
+        self.inner.search_space()
+    }
+
+    fn adapter_path(&self) -> PathBuf {
+        self.adapter_path.clone()
+    }
+
+    fn genome_to_adapter_input(&self, genome: &SampledGenome) -> Value {
+        self.inner.genome_to_adapter_input(genome)
+    }
+}
+
+/// Replace a resolved target's adapter path while preserving its genome and
+/// input mapping.
+pub fn with_adapter_path(target: Box<dyn Target>, adapter_path: PathBuf) -> Box<dyn Target> {
+    Box::new(AdapterOverride {
+        inner: target,
+        adapter_path,
+    })
+}
+
 /// Resolve a target by name. Returns `None` for unknown targets.
 ///
 /// The adapter binary path is resolved in priority order:

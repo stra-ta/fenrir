@@ -31,6 +31,7 @@ impl Target for LokiTarget {
 
     fn default_genome(&self) -> Genome {
         Genome {
+            schema_version: fenrir_core::genome::CURRENT_SCHEMA_VERSION,
             topology: TopologyGenome {
                 producers: ParameterSpec::Range {
                     min: 1.0,
@@ -176,7 +177,11 @@ impl Target for LokiTarget {
         let mut payload = serde_json::Map::new();
         payload.insert("size_distribution".into(), json!("fixed"));
         if let Some(v) = genome.values.get("payload.size") {
-            payload.insert("size".into(), json!(*v as u64));
+            // Choice values are encoded as coordinates by SearchSpace.  The
+            // Loki adapter consumes the actual payload byte count.
+            let size_choices = [64_u64, 256, 512, 1024, 4096];
+            let idx = (*v as i64).clamp(0, (size_choices.len() - 1) as i64) as usize;
+            payload.insert("size".into(), json!(size_choices[idx]));
         }
         payload.insert("key_distribution".into(), json!("uniform"));
         obj.insert("payload".into(), payload.into());

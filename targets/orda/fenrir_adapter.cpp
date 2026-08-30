@@ -203,8 +203,10 @@ int main(int argc, char** argv) {
     // a heavy tail whose sigma grows with thrash. Add occasional saturation
     // spikes when the hot price level is contended (zipfian + churn).
     const size_t SAMPLES = 400000;
-    std::mt19937_64 rng(static_cast<uint64_t>(
-        std::chrono::steady_clock::now().time_since_epoch().count()));
+    // The runner supplies a per-evaluation seed in the genome document.  Do
+    // not use wall-clock entropy in measured artifacts.
+    const uint64_t seed = genome_json.value("seed", 0ULL);
+    std::mt19937_64 rng(seed);
     std::uniform_real_distribution<double> u01(0.0, 1.0);
 
     const double sigma = 0.25 + thrash * 1.2;
@@ -264,6 +266,8 @@ int main(int argc, char** argv) {
 
     observation["metrics"]["hardware"]["cycles"] = nullptr;
     observation["metrics"]["os"]["context_switches"] = nullptr;
+    observation["metadata"]["seed"] = seed;
+    observation["metadata"]["adapter"] = "orda-synthetic";
 
     if (!output_path.empty()) {
         std::ofstream out(output_path);

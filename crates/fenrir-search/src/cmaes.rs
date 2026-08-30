@@ -2,8 +2,9 @@ use crate::{Evaluation, Optimizer};
 use fenrir_core::{SampledGenome, SearchSpace};
 use nalgebra::{DMatrix, DVector};
 use rand::SeedableRng;
-use rand::rngs::StdRng;
+use rand_chacha::ChaCha12Rng;
 use rand_distr::{Distribution, Normal};
+use serde::{Deserialize, Serialize};
 
 /// Maximum number of generations without improvement before an alternating
 /// large/small-population restart.
@@ -34,13 +35,99 @@ struct CmaState {
     gen_count: u64,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct CmaStateSnapshot {
+    n: usize,
+    lambda: usize,
+    mu: usize,
+    weights: Vec<f64>,
+    mueff: f64,
+    cc: f64,
+    cs: f64,
+    c1: f64,
+    cmu: f64,
+    damps: f64,
+    chi_n: f64,
+    mean: Vec<f64>,
+    sigma: f64,
+    covariance: Vec<f64>,
+    pc: Vec<f64>,
+    ps: Vec<f64>,
+    gen_count: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct CmaStateEnvelope {
+    evaluations: usize,
+    rng: ChaCha12Rng,
+    state: Option<CmaStateSnapshot>,
+    buffer: Vec<(Vec<f64>, f64)>,
+    best_score: Option<f64>,
+    stagnation: u64,
+    restart_large: bool,
+}
+
+impl CmaStateSnapshot {
+    fn from_state(state: &CmaState) -> Self {
+        Self {
+            n: state.n,
+            lambda: state.lambda,
+            mu: state.mu,
+            weights: state.weights.clone(),
+            mueff: state.mueff,
+            cc: state.cc,
+            cs: state.cs,
+            c1: state.c1,
+            cmu: state.cmu,
+            damps: state.damps,
+            chi_n: state.chi_n,
+            mean: state.mean.as_slice().to_vec(),
+            sigma: state.sigma,
+            covariance: state.c.as_slice().to_vec(),
+            pc: state.pc.as_slice().to_vec(),
+            ps: state.ps.as_slice().to_vec(),
+            gen_count: state.gen_count,
+        }
+    }
+
+    fn into_state(self) -> Option<CmaState> {
+        if self.n == 0
+            || self.mean.len() != self.n
+            || self.pc.len() != self.n
+            || self.ps.len() != self.n
+            || self.covariance.len() != self.n * self.n
+        {
+            return None;
+        }
+        Some(CmaState {
+            n: self.n,
+            lambda: self.lambda,
+            mu: self.mu,
+            weights: self.weights,
+            mueff: self.mueff,
+            cc: self.cc,
+            cs: self.cs,
+            c1: self.c1,
+            cmu: self.cmu,
+            damps: self.damps,
+            chi_n: self.chi_n,
+            mean: DVector::from_vec(self.mean),
+            sigma: self.sigma,
+            c: DMatrix::from_column_slice(self.n, self.n, &self.covariance),
+            pc: DVector::from_vec(self.pc),
+            ps: DVector::from_vec(self.ps),
+            gen_count: self.gen_count,
+        })
+    }
+}
+
 pub struct CmaEsOptimizer {
     space: SearchSpace,
     budget: usize,
     evaluations: usize,
 
     /// Seeded RNG derived from the campaign seed.
-    rng: StdRng,
+    rng: ChaCha12Rng,
 
     /// The (possibly restarted) CMA-ES state.
     state: Option<CmaState>,
@@ -80,7 +167,7 @@ impl CmaEsOptimizer {
             space,
             budget,
             evaluations: 0,
-            rng: StdRng::seed_from_u64(seed),
+            rng: ChaCha12Rng::seed_from_u64(seed),
             state: None,
             buffer: Vec::new(),
             center,
@@ -154,7 +241,12 @@ impl CmaEsOptimizer {
     fn to_genome(&self, v: &DVector<f64>) -> SampledGenome {
         let mut v = v.clone();
         self.space.clip(&mut v);
-        for &i in &self.space.categorical_indices {
+        for &i in self
+            .space
+            .categorical_indices
+            .iter()
+            .chain(self.space.discrete_indices.iter())
+        {
             let (lo, hi) = self.space.bounds[i];
             v[i] = v[i].round().clamp(lo, hi);
         }
@@ -318,6 +410,73 @@ impl Optimizer for CmaEsOptimizer {
 
     fn is_done(&self) -> bool {
         self.evaluations >= self.budget || self.space.dimension() == 0
+    }
+
+    fn checkpoint(&self) -> Option<crate::OptimizerCheckpoint> {
+        let state = self.state.as_ref().map(CmaStateSnapshot::from_state);
+        let buffer = self
+            .buffer
+            .iter()
+            .map(|(vector, score)| (vector.as_slice().to_vec(), *score))
+            .collect();
+        Some(crate::OptimizerCheckpoint {
+            algorithm: "cmaes".into(),
+            budget: self.budget,
+            state: serde_json::to_value(CmaStateEnvelope {
+                evaluations: self.evaluations,
+                rng: self.rng.clone(),
+                state,
+                buffer,
+                best_score: self.best_score,
+                stagnation: self.stagnation,
+                restart_large: self.restart_large,
+            })
+            .expect("cma-es optimiser state is serializable"),
+        })
+    }
+
+    fn restore(&mut self, checkpoint: &crate::OptimizerCheckpoint) -> anyhow::Result<()> {
+        if checkpoint.algorithm != "cmaes" || checkpoint.budget != self.budget {
+            anyhow::bail!("checkpoint does not match cma-es optimizer")
+        }
+        let envelope: CmaStateEnvelope = serde_json::from_value(checkpoint.state.clone())?;
+        if envelope.evaluations > self.budget {
+            anyhow::bail!("checkpoint evaluations exceed optimizer budget")
+        }
+        let state = match envelope.state {
+            Some(snapshot) => {
+                if snapshot.n != self.space.dimension() {
+                    anyhow::bail!("checkpoint search-space dimension does not match genome")
+                }
+                snapshot
+                    .into_state()
+                    .ok_or_else(|| anyhow::anyhow!("invalid cma-es state vectors"))?
+            }
+            None => {
+                if self.space.dimension() == 0 {
+                    self.state = None;
+                    self.evaluations = envelope.evaluations;
+                    self.rng = envelope.rng;
+                    return Ok(());
+                }
+                self.make_state(&self.center, self.init_sigma, self.base_lambda)
+            }
+        };
+        self.evaluations = envelope.evaluations;
+        self.rng = envelope.rng;
+        self.state = Some(state);
+        self.buffer = envelope
+            .buffer
+            .into_iter()
+            .map(|(vector, score)| (DVector::from_vec(vector), score))
+            .collect();
+        if self.buffer.iter().any(|(v, _)| v.len() != self.space.dimension()) {
+            anyhow::bail!("checkpoint buffer dimension does not match genome")
+        }
+        self.best_score = envelope.best_score;
+        self.stagnation = envelope.stagnation;
+        self.restart_large = envelope.restart_large;
+        Ok(())
     }
 }
 

@@ -1,10 +1,13 @@
 use clap::{Parser, Subcommand};
+use anyhow::Context;
 use fenrir_core::{Genome, Objective};
 use fenrir_runner::evaluate_genome;
 use fenrir_search::{
-    BayesianOptimizer, CmaEsOptimizer, Evaluation, MapElitesOptimizer, Optimizer, RandomSearch,
+    BayesianOptimizer, CmaEsOptimizer, Evaluation, MapElitesOptimizer, Optimizer,
+    OptimizerCheckpoint, RandomSearch,
 };
 use fenrir_store::CampaignStore;
+use fenrir_store::CampaignManifest;
 use fenrir_targets::get_target;
 use figment::providers::{Format, Toml};
 use std::path::PathBuf;
@@ -70,6 +73,11 @@ enum Commands {
         /// Execution backend: local (subprocess adapter) or kiln (Kiln runner)
         #[arg(long, default_value = "local")]
         backend: String,
+
+        /// Resume an interrupted campaign from `optimizer.json` in the output
+        /// directory, preserving optimizer and RNG state.
+        #[arg(long)]
+        resume: bool,
     },
 
     /// Analyze campaign results
@@ -104,10 +112,11 @@ async fn main() -> anyhow::Result<()> {
             output,
             adapter,
             backend,
+            resume,
         } => {
             hunt(
                 target, genome, objective, optimizer, budget, parallel, duration, seed, output,
-                adapter, backend,
+                adapter, backend, resume,
             )
             .await?;
         }
@@ -132,17 +141,34 @@ async fn hunt(
     output_dir: PathBuf,
     adapter_path: Option<PathBuf>,
     backend: String,
+    resume: bool,
 ) -> anyhow::Result<()> {
+    if budget == 0 {
+        anyhow::bail!("budget must be greater than zero");
+    }
+    if parallel == 0 {
+        anyhow::bail!("parallel must be greater than zero");
+    }
+    if backend != "local" && backend != "kiln" {
+        anyhow::bail!("unknown backend '{}'; expected local or kiln", backend);
+    }
     info!(
         "Starting Fenrir hunt: target={}, budget={}, parallel={}, backend={}",
         target, budget, parallel, backend
     );
 
     // Resolve target implementation (owns genome + adapter mapping).
-    let target: Arc<dyn fenrir_targets::Target> =
-        Arc::from(get_target(&target).ok_or_else(|| {
-            anyhow::anyhow!("Unknown target: {}. Known: norn, weir, loki, orda", target)
-        })?);
+    let target = get_target(&target).ok_or_else(|| {
+        anyhow::anyhow!("Unknown target: {}. Known: norn, weir, loki, orda", target)
+    })?;
+
+    // An explicit adapter must be the path used by the runner, not only an
+    // existence check.  Keep the target's mapping while overriding its binary.
+    let resolved_adapter = adapter_path.clone().unwrap_or_else(|| target.adapter_path());
+    let target: Arc<dyn fenrir_targets::Target> = match adapter_path {
+        Some(path) => Arc::from(fenrir_targets::with_adapter_path(target, path)),
+        None => Arc::from(target),
+    };
 
     // Load genome
     let genome = if let Some(path) = genome_path {
@@ -160,7 +186,6 @@ async fn hunt(
     };
 
     // Determine adapter path (used for existence check in local backend).
-    let resolved_adapter = adapter_path.unwrap_or_else(|| target.adapter_path());
     if backend == "local" && !resolved_adapter.exists() {
         anyhow::bail!(
             "Adapter not found at {:?}. Build it first.",
@@ -172,6 +197,40 @@ async fn hunt(
 
     // Initialize store
     let mut store = CampaignStore::new(&output_dir)?;
+    let repo_root = std::env::var_os("CARGO_MANIFEST_DIR")
+        .map(PathBuf::from)
+        .map(|path| path.join("..").join(".."))
+        .unwrap_or_else(|| PathBuf::from("."));
+    let manifest_path = output_dir.join("results").join("manifest.json");
+    let root_manifest_path = output_dir.join("manifest.json");
+    let mut manifest = if resume && manifest_path.exists() {
+        let bytes = std::fs::read(&manifest_path).with_context(|| {
+            format!("failed to read campaign manifest {}", manifest_path.display())
+        })?;
+        serde_json::from_slice(&bytes).with_context(|| {
+            format!("invalid campaign manifest {}", manifest_path.display())
+        })?
+    } else {
+        CampaignManifest::capture(
+            target.name().to_string(),
+            optimizer_name.clone(),
+            budget,
+            duration,
+            parallel,
+            seed,
+            backend.clone(),
+            &repo_root,
+        )
+    };
+    if manifest.target != target.name()
+        || manifest.optimizer != optimizer_name
+        || manifest.budget != budget
+        || manifest.seed != seed
+    {
+        anyhow::bail!("campaign manifest does not match the requested resume plan");
+    }
+    manifest.write_atomic(&manifest_path)?;
+    manifest.write_atomic(&root_manifest_path)?;
 
     // Create search space and optimizer
     let search_space = genome.search_space();
@@ -185,9 +244,20 @@ async fn hunt(
         _ => anyhow::bail!("Unknown optimizer: {}", optimizer_name),
     };
 
+    let checkpoint_path = output_dir.join("optimizer.json");
+    if resume && checkpoint_path.exists() {
+        let bytes = std::fs::read(&checkpoint_path).with_context(|| {
+            format!("failed to read optimizer checkpoint {}", checkpoint_path.display())
+        })?;
+        let checkpoint: OptimizerCheckpoint = serde_json::from_slice(&bytes)
+            .with_context(|| format!("invalid optimizer checkpoint {}", checkpoint_path.display()))?;
+        optimizer.restore(&checkpoint)?;
+        info!("Resumed optimizer from {}", checkpoint_path.display());
+    }
+
     // Semaphore for parallel execution
     let semaphore = Arc::new(Semaphore::new(parallel));
-    let mut iteration = 0u64;
+    let mut iteration = store.load_all()?.len() as u64;
 
     // Run optimization loop
     while !optimizer.is_done() {
@@ -275,10 +345,24 @@ async fn hunt(
         }
 
         optimizer.update(&evaluations);
+
+        if let Some(checkpoint) = optimizer.checkpoint() {
+            let tmp = checkpoint_path.with_extension("json.tmp");
+            let bytes = serde_json::to_vec_pretty(&checkpoint)?;
+            std::fs::write(&tmp, bytes).with_context(|| {
+                format!("failed to write optimizer checkpoint {}", tmp.display())
+            })?;
+            std::fs::rename(&tmp, &checkpoint_path).with_context(|| {
+                format!("failed to publish optimizer checkpoint {}", checkpoint_path.display())
+            })?;
+        }
     }
 
     // Flush store
     store.flush()?;
+    manifest.add_artifact(output_dir.join("evaluations.jsonl"))?;
+    manifest.write_atomic(&manifest_path)?;
+    manifest.write_atomic(&root_manifest_path)?;
 
     // Print summary
     let all = store.load_all()?;

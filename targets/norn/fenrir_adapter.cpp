@@ -569,6 +569,8 @@ int main(int argc, char** argv) {
     observation["metrics"]["hardware"]["cache_misses"] = nullptr;
     observation["metrics"]["os"]["context_switches"] = nullptr;
     observation["metrics"]["os"]["rss_kb"] = nullptr;
+    observation["metadata"]["seed"] = cfg.seed;
+    observation["metadata"]["adapter"] = "norn-real-or-vendored";
 
     if (!output_path.empty()) {
         std::ofstream out(output_path);

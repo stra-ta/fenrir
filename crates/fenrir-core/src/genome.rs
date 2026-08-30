@@ -4,11 +4,24 @@ use std::collections::HashMap;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Genome {
+    /// Version of the serialized genome document.
+    ///
+    /// Keeping this in the document makes old campaign plans distinguishable
+    /// from newly-authored plans.  Missing values are interpreted as version 1
+    /// for the pre-versioning files already checked into the repository.
+    #[serde(default = "default_schema_version")]
+    pub schema_version: u32,
     pub topology: TopologyGenome,
     pub traffic: TrafficGenome,
     pub payload: PayloadGenome,
     pub behavior: BehaviorGenome,
     pub faults: Option<FaultGenome>,
+}
+
+pub const CURRENT_SCHEMA_VERSION: u32 = 1;
+
+fn default_schema_version() -> u32 {
+    CURRENT_SCHEMA_VERSION
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -45,9 +58,21 @@ pub struct BehaviorGenome {
 pub enum ParameterSpec {
     Fixed { value: serde_json::Value },
     Range { min: f64, max: f64, log: bool },
+    Integer { min: i64, max: i64 },
     Choice { values: Vec<serde_json::Value> },
     Distribution { dist: DistributionSpec },
     LogUniform { min: f64, max: f64 },
+    /// A parameter whose domain is selected by another sampled parameter.
+    ///
+    /// The coordinate is still represented in the optimizer's fixed vector;
+    /// callers that do not satisfy the condition omit the value from the
+    /// adapter document.  This keeps existing optimizers compatible while
+    /// making conditional dimensions explicit in the genome schema.
+    Conditional {
+        depends_on: String,
+        equals: serde_json::Value,
+        spec: Box<ParameterSpec>,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -108,6 +133,9 @@ pub struct FaultGenome {
 
 impl Genome {
     pub fn validate(&self) -> Result<(), GenomeError> {
+        if self.schema_version == 0 || self.schema_version > CURRENT_SCHEMA_VERSION {
+            return Err(GenomeError::UnsupportedSchemaVersion(self.schema_version));
+        }
         self.topology.validate()?;
         self.traffic.validate()?;
         self.payload.validate()?;
@@ -124,6 +152,7 @@ impl Genome {
 
     pub fn default_norn() -> Self {
         Self {
+            schema_version: CURRENT_SCHEMA_VERSION,
             topology: TopologyGenome {
                 producers: ParameterSpec::Range {
                     min: 1.0,
@@ -261,6 +290,14 @@ fn validate_positive(spec: &ParameterSpec, path: &str) -> Result<(), GenomeError
                 });
             }
         }
+        ParameterSpec::Integer { min, .. } => {
+            if *min <= 0 {
+                return Err(GenomeError::InvalidParameter {
+                    path: path.into(),
+                    reason: "min must be positive".into(),
+                });
+            }
+        }
         ParameterSpec::Choice { values } => {
             for v in values {
                 if let Some(n) = v.as_f64()
@@ -273,6 +310,7 @@ fn validate_positive(spec: &ParameterSpec, path: &str) -> Result<(), GenomeError
                 }
             }
         }
+        ParameterSpec::Conditional { spec, .. } => validate_positive(spec, path)?,
         _ => {}
     }
     Ok(())
@@ -302,6 +340,14 @@ fn validate_nonnegative(spec: &ParameterSpec, path: &str) -> Result<(), GenomeEr
                 });
             }
         }
+        ParameterSpec::Integer { min, .. } => {
+            if *min < 0 {
+                return Err(GenomeError::InvalidParameter {
+                    path: path.into(),
+                    reason: "min must be non-negative".into(),
+                });
+            }
+        }
         ParameterSpec::Choice { values } => {
             for v in values {
                 if let Some(n) = v.as_f64()
@@ -314,6 +360,7 @@ fn validate_nonnegative(spec: &ParameterSpec, path: &str) -> Result<(), GenomeEr
                 }
             }
         }
+        ParameterSpec::Conditional { spec, .. } => validate_nonnegative(spec, path)?,
         _ => {}
     }
     Ok(())
@@ -342,6 +389,17 @@ fn validate_bounded(
                 reason: format!("range must be within [{}, {}]", min_allowed, max_allowed),
             });
         }
+        ParameterSpec::Integer { min, max }
+            if (*min as f64) < min_allowed || (*max as f64) > max_allowed =>
+        {
+            return Err(GenomeError::InvalidParameter {
+                path: path.into(),
+                reason: format!("range must be within [{}, {}]", min_allowed, max_allowed),
+            });
+        }
+        ParameterSpec::Conditional { spec, .. } => {
+            validate_bounded(spec, min_allowed, max_allowed, path)?
+        }
         _ => {}
     }
     Ok(())
@@ -353,6 +411,8 @@ pub enum GenomeError {
     InvalidParameter { path: String, reason: String },
     #[error("invalid fault config: {0}")]
     InvalidFaultConfig(String),
+    #[error("unsupported genome schema version: {0}")]
+    UnsupportedSchemaVersion(u32),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -399,6 +459,8 @@ impl ParameterSpec {
                 }
                 values[idx as usize].as_f64().unwrap_or(coord)
             }
+            ParameterSpec::Integer { min, max } => coord.round().clamp(*min as f64, *max as f64),
+            ParameterSpec::Conditional { spec, .. } => spec.decode(coord),
             _ => coord,
         }
     }
@@ -449,5 +511,47 @@ mod tests {
             log: false,
         };
         assert_eq!(spec.decode(0.5), 0.5);
+    }
+
+    #[test]
+    fn missing_schema_version_uses_current_version() {
+        let value = serde_json::to_value(Genome::default_norn()).unwrap();
+        let mut object = value.as_object().cloned().unwrap();
+        object.remove("schema_version");
+        let parsed: Genome = serde_json::from_value(object.into()).unwrap();
+        assert_eq!(parsed.schema_version, CURRENT_SCHEMA_VERSION);
+        assert!(parsed.validate().is_ok());
+    }
+
+    #[test]
+    fn future_schema_version_is_rejected() {
+        let mut value = serde_json::to_value(Genome::default_norn()).unwrap();
+        value["schema_version"] = serde_json::json!(CURRENT_SCHEMA_VERSION + 1);
+        let parsed: Genome = serde_json::from_value(value).unwrap();
+        assert!(matches!(
+            parsed.validate(),
+            Err(GenomeError::UnsupportedSchemaVersion(_))
+        ));
+    }
+
+    #[test]
+    fn conditional_spec_preserves_inner_domain_and_decoding() {
+        let spec = ParameterSpec::Conditional {
+            depends_on: "mode".into(),
+            equals: serde_json::json!("fast"),
+            spec: Box::new(payload_size_spec()),
+        };
+        assert_eq!(spec.decode(2.0), 192.0);
+        let genome = Genome::default_norn();
+        let space = genome.search_space();
+        assert_eq!(space.dimension(), 9);
+    }
+
+    #[test]
+    fn integer_spec_rounds_and_clamps() {
+        let spec = ParameterSpec::Integer { min: 2, max: 6 };
+        assert_eq!(spec.decode(3.6), 4.0);
+        assert_eq!(spec.decode(-1.0), 2.0);
+        assert_eq!(spec.decode(99.0), 6.0);
     }
 }

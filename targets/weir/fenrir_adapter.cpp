@@ -201,8 +201,10 @@ int main(int argc, char** argv) {
     double wal_sync_latency_ns = wal_ns * (1.0 + stress * 5.0);
 
     // ----- Synthetic latency samples -----
-    std::mt19937_64 rng(static_cast<uint64_t>(
-        std::chrono::steady_clock::now().time_since_epoch().count()));
+    // The runner supplies a per-evaluation seed in the genome document.  A
+    // fixed fallback keeps direct adapter invocations deterministic too.
+    const uint64_t seed = genome_json.value("seed", 0ULL);
+    std::mt19937_64 rng(seed);
     const double RNG_MAX = static_cast<double>(std::numeric_limits<uint64_t>::max());
 
     const int M = 100000;
@@ -258,6 +260,8 @@ int main(int argc, char** argv) {
     observation["metrics"]["application"]["pipeline_stalls"] = pipeline_stalls;
     observation["metrics"]["hardware"]["cycles"] = nullptr;
     observation["metrics"]["os"]["context_switches"] = nullptr;
+    observation["metadata"]["seed"] = seed;
+    observation["metadata"]["adapter"] = "weir-synthetic";
 
     std::cout << observation.dump(2) << "\n";
     return 0;

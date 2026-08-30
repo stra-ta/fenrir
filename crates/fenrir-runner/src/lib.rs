@@ -1,5 +1,6 @@
 pub mod kiln;
 pub mod local;
+pub mod repeat;
 
 use anyhow::Result;
 use fenrir_core::{Observation, SampledGenome};

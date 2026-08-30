@@ -11,6 +11,44 @@ pub struct SearchSpace {
     pub param_types: Vec<ParamType>,
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::genome::{BehaviorGenome, Genome, ParameterSpec, TopologyGenome, TrafficGenome};
+
+    #[test]
+    fn integer_dimensions_are_discrete() {
+        let genome = Genome {
+            schema_version: crate::genome::CURRENT_SCHEMA_VERSION,
+            topology: TopologyGenome {
+                producers: ParameterSpec::Integer { min: 1, max: 4 },
+                consumers: ParameterSpec::Integer { min: 1, max: 4 },
+                affinity: crate::genome::AffinitySpec::Core,
+            },
+            traffic: TrafficGenome {
+                arrival_process: crate::genome::ArrivalProcess::Constant,
+                rate: ParameterSpec::Range { min: 1.0, max: 2.0, log: false },
+                burstiness: ParameterSpec::Range { min: 0.0, max: 1.0, log: false },
+                correlation: ParameterSpec::Range { min: 0.0, max: 1.0, log: false },
+            },
+            payload: crate::genome::PayloadGenome {
+                size_distribution: crate::genome::SizeDistribution::Fixed,
+                size: ParameterSpec::Choice { values: vec![serde_json::json!(1)] },
+                key_distribution: crate::genome::KeyDistribution::Uniform,
+            },
+            behavior: BehaviorGenome {
+                read_write_ratio: ParameterSpec::Range { min: 0.0, max: 1.0, log: false },
+                lifetime_ns: ParameterSpec::Range { min: 1.0, max: 2.0, log: false },
+                think_time_ns: ParameterSpec::Range { min: 0.0, max: 1.0, log: false },
+            },
+            faults: None,
+        };
+        let space = genome.search_space();
+        assert_eq!(space.discrete_indices, vec![0, 1]);
+        assert_eq!(space.param_types[0], ParamType::Discrete);
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ParamType {
     Continuous,
@@ -103,14 +141,14 @@ impl SearchSpace {
         faults: &crate::genome::FaultGenome,
         names: &mut Vec<String>,
         bounds: &mut Vec<(f64, f64)>,
-        _discrete: &mut Vec<usize>,
+        discrete: &mut Vec<usize>,
         categorical: &mut Vec<usize>,
         types: &mut Vec<ParamType>,
     ) {
         for (key, spec) in &faults.parameters {
             let idx = names.len();
             names.push(format!("faults.{}", key));
-            Self::extract_param_spec(spec, idx, bounds, types, categorical);
+            Self::extract_param_spec(spec, idx, bounds, types, discrete, categorical);
         }
     }
 
@@ -119,7 +157,7 @@ impl SearchSpace {
         prefix: &str,
         names: &mut Vec<String>,
         bounds: &mut Vec<(f64, f64)>,
-        _discrete: &mut Vec<usize>,
+        discrete: &mut Vec<usize>,
         categorical: &mut Vec<usize>,
         types: &mut Vec<ParamType>,
     ) {
@@ -138,6 +176,7 @@ impl SearchSpace {
                                 idx,
                                 bounds,
                                 types,
+                                discrete,
                                 categorical,
                             );
                         } else {
@@ -146,7 +185,7 @@ impl SearchSpace {
                                 &path,
                                 names,
                                 bounds,
-                                _discrete,
+                                discrete,
                                 categorical,
                                 types,
                             );
@@ -157,7 +196,7 @@ impl SearchSpace {
                             &path,
                             names,
                             bounds,
-                            _discrete,
+                            discrete,
                             categorical,
                             types,
                         );
@@ -173,6 +212,7 @@ impl SearchSpace {
         idx: usize,
         bounds: &mut Vec<(f64, f64)>,
         types: &mut Vec<ParamType>,
+        discrete: &mut Vec<usize>,
         categorical: &mut Vec<usize>,
     ) {
         match type_str {
@@ -196,6 +236,13 @@ impl SearchSpace {
                     ParamType::Continuous
                 });
             }
+            "Integer" => {
+                let min = spec_obj.get("min").and_then(|v| v.as_i64()).unwrap_or(0);
+                let max = spec_obj.get("max").and_then(|v| v.as_i64()).unwrap_or(min);
+                bounds.push((min as f64, max as f64));
+                types.push(ParamType::Discrete);
+                discrete.push(idx);
+            }
             "Choice" => {
                 if let Some(values) = spec_obj.get("values").and_then(|v| v.as_array()) {
                     bounds.push((0.0, values.len() as f64 - 1.0));
@@ -212,6 +259,26 @@ impl SearchSpace {
             "Distribution" => {
                 if let Some(dist_obj) = spec_obj.get("dist") {
                     Self::extract_distribution(dist_obj, idx, bounds, types);
+                }
+            }
+            "Conditional" => {
+                if let Some(inner) = spec_obj.get("spec") {
+                    let inner_type = inner
+                        .get("type")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("Range");
+                    Self::extract_param_spec_from_type(
+                        inner_type,
+                        inner,
+                        idx,
+                        bounds,
+                        types,
+                        discrete,
+                        categorical,
+                    );
+                } else {
+                    bounds.push((0.0, 1.0));
+                    types.push(ParamType::Continuous);
                 }
             }
             _ => {
@@ -256,6 +323,7 @@ impl SearchSpace {
         idx: usize,
         bounds: &mut Vec<(f64, f64)>,
         types: &mut Vec<ParamType>,
+        discrete: &mut Vec<usize>,
         categorical: &mut Vec<usize>,
     ) {
         match spec {
@@ -272,6 +340,11 @@ impl SearchSpace {
                 } else {
                     ParamType::Continuous
                 });
+            }
+            ParameterSpec::Integer { min, max } => {
+                bounds.push((*min as f64, *max as f64));
+                types.push(ParamType::Discrete);
+                discrete.push(idx);
             }
             ParameterSpec::Choice { values } => {
                 bounds.push((0.0, values.len() as f64 - 1.0));
@@ -296,6 +369,9 @@ impl SearchSpace {
                     types.push(ParamType::Continuous);
                 }
             },
+            ParameterSpec::Conditional { spec, .. } => {
+                Self::extract_param_spec(spec, idx, bounds, types, discrete, categorical)
+            }
         }
     }
 

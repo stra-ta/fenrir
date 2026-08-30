@@ -2,7 +2,7 @@
 name = "fenrir-search"
 version = "0.1.0"
 edition = "2024"
-license = "MIT OR Apache-2.0"
+license.workspace = true
 
 [dependencies]
 fenrir-core = { path = "../fenrir-core" }
@@ -10,5 +10,6 @@ anyhow = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 rand = { workspace = true }
+rand_chacha = { workspace = true }
 rand_distr = { workspace = true }
 nalgebra = { workspace = true }

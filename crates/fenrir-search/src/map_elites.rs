@@ -1,9 +1,10 @@
-use crate::{Evaluation, Optimizer};
+use crate::{Evaluation, NoveltyArchive, Optimizer};
 use fenrir_core::{Observation, SampledGenome, Score, SearchSpace};
 use rand::Rng;
 use rand::SeedableRng;
-use rand::rngs::StdRng;
+use rand_chacha::ChaCha12Rng;
 use rand_distr::{Distribution, Normal};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 /// Number of bins per behavioral-feature axis (6x6 = up to 36 elite cells).
@@ -32,6 +33,22 @@ const PERTURB_FRACTION: f64 = 0.1;
 /// Probability of returning a pure random sample versus a perturbed elite.
 const RANDOM_PROB: f64 = 0.5;
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ArchiveEntry {
+    cell: (usize, usize),
+    score: Score,
+    genome: SampledGenome,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct MapElitesState {
+    evaluations: usize,
+    rng: ChaCha12Rng,
+    archive: Vec<ArchiveEntry>,
+    #[serde(default)]
+    novelty_embeddings: Vec<Vec<f32>>,
+}
+
 /// A genuine MAP-Elites (Quality-Diversity) optimizer.
 ///
 /// It maintains an archive mapping each (behavioral-feature) cell to the best
@@ -44,9 +61,13 @@ pub struct MapElitesOptimizer {
     budget: usize,
     evaluations: usize,
     /// Seeded RNG derived from the campaign seed.
-    rng: StdRng,
+    rng: ChaCha12Rng,
     /// cell (throughput_bin, tail_bin) -> (best_score, elite_genome)
     archive: HashMap<(usize, usize), (Score, SampledGenome)>,
+    /// Optional Ygg embeddings observed alongside evaluations.  The archive
+    /// remains usable when instrumentation is absent; such evaluations are
+    /// simply not added here.
+    novelty: NoveltyArchive,
 }
 
 impl MapElitesOptimizer {
@@ -55,8 +76,9 @@ impl MapElitesOptimizer {
             space,
             budget,
             evaluations: 0,
-            rng: StdRng::seed_from_u64(seed),
+            rng: ChaCha12Rng::seed_from_u64(seed),
             archive: HashMap::new(),
+            novelty: NoveltyArchive::new(),
         }
     }
 
@@ -105,7 +127,11 @@ impl MapElitesOptimizer {
         // Repaired point: clip then round categorical indices, exactly as in
         // cmaes.rs to_genome.
         space.clip(&mut v);
-        for &i in &space.categorical_indices {
+        for &i in space
+            .categorical_indices
+            .iter()
+            .chain(space.discrete_indices.iter())
+        {
             let (lo, hi) = space.bounds[i];
             v[i] = v[i].round().clamp(lo, hi);
         }
@@ -123,6 +149,11 @@ impl MapElitesOptimizer {
             .iter()
             .map(|(cell, (score, genome))| (*cell, *score, genome.clone()))
             .collect()
+    }
+
+    /// Number of Ygg execution embeddings retained for novelty diagnostics.
+    pub fn novelty_len(&self) -> usize {
+        self.novelty.len()
     }
 }
 
@@ -150,6 +181,11 @@ impl Optimizer for MapElitesOptimizer {
 
     fn update(&mut self, evaluations: &[Evaluation]) {
         for ev in evaluations {
+            // Ygg is an optional instrumentation path.  Record embeddings
+            // before archive filtering so infeasible executions can still
+            // identify novel behavioral regimes.
+            let _ = self.novelty.observe(&ev.observation, 5);
+
             // Only feasible (finite) scores populate the archive.
             if !ev.score.feasible() {
                 continue;
@@ -173,6 +209,54 @@ impl Optimizer for MapElitesOptimizer {
 
     fn is_done(&self) -> bool {
         self.evaluations >= self.budget
+    }
+
+    fn checkpoint(&self) -> Option<crate::OptimizerCheckpoint> {
+        let archive = self
+            .archive
+            .iter()
+            .map(|(cell, (score, genome))| ArchiveEntry {
+                cell: *cell,
+                score: *score,
+                genome: genome.clone(),
+            })
+            .collect();
+        Some(crate::OptimizerCheckpoint {
+            algorithm: "map-elites".into(),
+            budget: self.budget,
+            state: serde_json::to_value(MapElitesState {
+                evaluations: self.evaluations,
+                rng: self.rng.clone(),
+                archive,
+                novelty_embeddings: self.novelty.embeddings().to_vec(),
+            })
+            .expect("map-elites optimiser state is serializable"),
+        })
+    }
+
+    fn restore(&mut self, checkpoint: &crate::OptimizerCheckpoint) -> anyhow::Result<()> {
+        if checkpoint.algorithm != "map-elites" || checkpoint.budget != self.budget {
+            anyhow::bail!("checkpoint does not match map-elites optimizer")
+        }
+        let state: MapElitesState = serde_json::from_value(checkpoint.state.clone())?;
+        if state.evaluations > self.budget {
+            anyhow::bail!("checkpoint evaluations exceed optimizer budget")
+        }
+        if state.archive.iter().any(|entry| entry.genome.values.len() != self.space.dimension()) {
+            anyhow::bail!("checkpoint search-space dimension does not match genome")
+        }
+        self.evaluations = state.evaluations;
+        self.rng = state.rng;
+        self.archive = state
+            .archive
+            .into_iter()
+            .map(|entry| (entry.cell, (entry.score, entry.genome)))
+            .collect();
+        self.novelty = NoveltyArchive::new();
+        self.novelty
+            .embeddings_mut()
+            .extend(state.novelty_embeddings);
+        Ok(())
     }
 }
 
@@ -234,5 +318,34 @@ mod tests {
 
         assert!(opt.archive_len() > 0, "archive must be non-empty");
         eprintln!("archive_len = {}", opt.archive_len());
+    }
+
+    #[test]
+    fn ygg_embeddings_are_retained_for_novelty_diagnostics() {
+        let space = fenrir_core::Genome::default_norn().search_space();
+        let genome = space.random_sample(&mut rand::thread_rng());
+        let metrics = Metrics {
+            ygg_embedding: Some(vec![1.0, 0.0]),
+            ..Default::default()
+        };
+        let observation = Observation {
+            run_id: "ygg".into(),
+            genome: genome.clone(),
+            metrics,
+            artifacts: Artifacts::default(),
+            status: RunStatus::Success,
+            timestamp_ns: 0,
+            duration_ns: 0,
+        };
+        let evaluation = Evaluation {
+            iteration: 0,
+            genome,
+            score: Score(1.0),
+            observation,
+        };
+
+        let mut optimizer = MapElitesOptimizer::new(space, 1, 7);
+        optimizer.update(&[evaluation]);
+        assert_eq!(optimizer.novelty_len(), 1);
     }
 }

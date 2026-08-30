@@ -19,6 +19,19 @@ pub struct Metrics {
     pub hardware: HardwareCounters,
     pub os: OsMetrics,
     pub trace_path: Option<String>,
+    /// Scalar provenance labels attached by a target adapter or runner.
+    /// Keeping labels outside `application` prevents an optimizer from
+    /// accidentally treating a string such as a git SHA as a measurement.
+    #[serde(default)]
+    pub metadata: HashMap<String, String>,
+    /// Optional Ygg execution representation attached by a target runner.
+    /// The vector is evidence for novelty search, not a performance metric.
+    #[serde(default)]
+    pub ygg_embedding: Option<Vec<f32>>,
+    #[serde(default)]
+    pub ygg_novelty: Option<f64>,
+    #[serde(default)]
+    pub ygg_regime: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

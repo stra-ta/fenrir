@@ -83,7 +83,7 @@ impl Objective {
     pub fn evaluate(&self, observation: &Observation) -> Score {
         let primary_score = self.primary.evaluate(observation);
         let feasible = self.satisfies_constraints(observation);
-        if !feasible {
+        if !feasible || !primary_score.0.is_finite() {
             return Score::infeasible();
         }
 
@@ -91,7 +91,11 @@ impl Objective {
         for wo in &self.secondary {
             total += wo.weight * wo.objective.evaluate(observation).0;
         }
-        Score(total)
+        if total.is_finite() {
+            Score(total)
+        } else {
+            Score::infeasible()
+        }
     }
 
     pub fn satisfies_constraints(&self, observation: &Observation) -> bool {
@@ -111,9 +115,13 @@ impl ObjectiveExpr {
                 objectives,
             } => {
                 let mut total = 0.0;
-                for obj in objectives {
-                    total += weights.get(&format!("{:?}", obj)).unwrap_or(&1.0)
-                        * obj.evaluate(observation).0;
+                for (index, obj) in objectives.iter().enumerate() {
+                    let weight = weights
+                        .get(&obj.label())
+                        .or_else(|| weights.get(&index.to_string()))
+                        .copied()
+                        .unwrap_or(1.0);
+                    total += weight * obj.evaluate(observation).0;
                 }
                 Score(total)
             }
@@ -133,6 +141,15 @@ impl ObjectiveExpr {
                 let val = expr.evaluate(observation).0;
                 Score(transform.apply(val))
             }
+        }
+    }
+
+    fn label(&self) -> String {
+        match self {
+            ObjectiveExpr::Metric { name, .. } => name.clone(),
+            ObjectiveExpr::Composite { .. } => "composite".into(),
+            ObjectiveExpr::Ratio { .. } => "ratio".into(),
+            ObjectiveExpr::Transform { .. } => "transform".into(),
         }
     }
 }
@@ -158,10 +175,10 @@ impl Transform {
 impl Constraint {
     fn check(&self, observation: &Observation) -> bool {
         let value = observation.metrics.get_scalar(&self.metric);
-        if value.is_none() {
+        if value.is_none_or(|value| !value.is_finite()) {
             return false;
         }
-        let v = value.unwrap();
+        let v = value.unwrap_or_default();
         match self.op {
             ConstraintOp::Gt => v > self.threshold,
             ConstraintOp::Gte => v >= self.threshold,
@@ -242,6 +259,39 @@ impl Objective {
                 }),
             },
             constraints: vec![],
+            secondary: vec![],
+        }
+    }
+
+    /// Maximise p99 latency while requiring a minimum throughput.
+    pub fn p99_latency_subject_to_throughput(min_throughput: f64) -> Self {
+        Self {
+            primary: ObjectiveExpr::Metric {
+                name: "p99_latency_ns".into(),
+                aggregate: Aggregate::P99,
+            },
+            constraints: vec![Constraint {
+                metric: "throughput_ops_s".into(),
+                op: ConstraintOp::Gte,
+                threshold: min_throughput,
+            }],
+            secondary: vec![],
+        }
+    }
+
+    /// Maximise recovery time without accepting a run that reports a safety
+    /// violation.  Targets may expose a scalar `safety_violations` metric.
+    pub fn recovery_time_subject_to_safety() -> Self {
+        Self {
+            primary: ObjectiveExpr::Metric {
+                name: "recovery_time_ns".into(),
+                aggregate: Aggregate::Max,
+            },
+            constraints: vec![Constraint {
+                metric: "safety_violations".into(),
+                op: ConstraintOp::Eq,
+                threshold: 0.0,
+            }],
             secondary: vec![],
         }
     }
