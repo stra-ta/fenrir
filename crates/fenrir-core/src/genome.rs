@@ -56,12 +56,28 @@ pub struct BehaviorGenome {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type")]
 pub enum ParameterSpec {
-    Fixed { value: serde_json::Value },
-    Range { min: f64, max: f64, log: bool },
-    Integer { min: i64, max: i64 },
-    Choice { values: Vec<serde_json::Value> },
-    Distribution { dist: DistributionSpec },
-    LogUniform { min: f64, max: f64 },
+    Fixed {
+        value: serde_json::Value,
+    },
+    Range {
+        min: f64,
+        max: f64,
+        log: bool,
+    },
+    Integer {
+        min: i64,
+        max: i64,
+    },
+    Choice {
+        values: Vec<serde_json::Value>,
+    },
+    Distribution {
+        dist: DistributionSpec,
+    },
+    LogUniform {
+        min: f64,
+        max: f64,
+    },
     /// A parameter whose domain is selected by another sampled parameter.
     ///
     /// The coordinate is still represented in the optimizer's fixed vector;

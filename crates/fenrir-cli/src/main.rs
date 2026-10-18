@@ -1,13 +1,13 @@
-use clap::{Parser, Subcommand};
 use anyhow::Context;
+use clap::{Parser, Subcommand};
 use fenrir_core::{Genome, Objective};
 use fenrir_runner::evaluate_genome;
 use fenrir_search::{
     BayesianOptimizer, CmaEsOptimizer, Evaluation, MapElitesOptimizer, Optimizer,
     OptimizerCheckpoint, RandomSearch,
 };
-use fenrir_store::CampaignStore;
 use fenrir_store::CampaignManifest;
+use fenrir_store::CampaignStore;
 use fenrir_targets::get_target;
 use figment::providers::{Format, Toml};
 use std::path::PathBuf;
@@ -164,7 +164,9 @@ async fn hunt(
 
     // An explicit adapter must be the path used by the runner, not only an
     // existence check.  Keep the target's mapping while overriding its binary.
-    let resolved_adapter = adapter_path.clone().unwrap_or_else(|| target.adapter_path());
+    let resolved_adapter = adapter_path
+        .clone()
+        .unwrap_or_else(|| target.adapter_path());
     let target: Arc<dyn fenrir_targets::Target> = match adapter_path {
         Some(path) => Arc::from(fenrir_targets::with_adapter_path(target, path)),
         None => Arc::from(target),
@@ -205,11 +207,13 @@ async fn hunt(
     let root_manifest_path = output_dir.join("manifest.json");
     let mut manifest = if resume && manifest_path.exists() {
         let bytes = std::fs::read(&manifest_path).with_context(|| {
-            format!("failed to read campaign manifest {}", manifest_path.display())
+            format!(
+                "failed to read campaign manifest {}",
+                manifest_path.display()
+            )
         })?;
-        serde_json::from_slice(&bytes).with_context(|| {
-            format!("invalid campaign manifest {}", manifest_path.display())
-        })?
+        serde_json::from_slice(&bytes)
+            .with_context(|| format!("invalid campaign manifest {}", manifest_path.display()))?
     } else {
         CampaignManifest::capture(
             target.name().to_string(),
@@ -247,10 +251,15 @@ async fn hunt(
     let checkpoint_path = output_dir.join("optimizer.json");
     if resume && checkpoint_path.exists() {
         let bytes = std::fs::read(&checkpoint_path).with_context(|| {
-            format!("failed to read optimizer checkpoint {}", checkpoint_path.display())
+            format!(
+                "failed to read optimizer checkpoint {}",
+                checkpoint_path.display()
+            )
         })?;
-        let checkpoint: OptimizerCheckpoint = serde_json::from_slice(&bytes)
-            .with_context(|| format!("invalid optimizer checkpoint {}", checkpoint_path.display()))?;
+        let checkpoint: OptimizerCheckpoint =
+            serde_json::from_slice(&bytes).with_context(|| {
+                format!("invalid optimizer checkpoint {}", checkpoint_path.display())
+            })?;
         optimizer.restore(&checkpoint)?;
         info!("Resumed optimizer from {}", checkpoint_path.display());
     }
@@ -353,7 +362,10 @@ async fn hunt(
                 format!("failed to write optimizer checkpoint {}", tmp.display())
             })?;
             std::fs::rename(&tmp, &checkpoint_path).with_context(|| {
-                format!("failed to publish optimizer checkpoint {}", checkpoint_path.display())
+                format!(
+                    "failed to publish optimizer checkpoint {}",
+                    checkpoint_path.display()
+                )
             })?;
         }
     }

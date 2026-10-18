@@ -89,7 +89,11 @@ impl CampaignManifest {
             sha256: sha256(path),
             bytes: metadata.len(),
         };
-        if let Some(existing) = self.artifacts.iter_mut().find(|item| item.path == record.path) {
+        if let Some(existing) = self
+            .artifacts
+            .iter_mut()
+            .find(|item| item.path == record.path)
+        {
             *existing = record;
         } else {
             self.artifacts.push(record);
@@ -104,12 +108,8 @@ impl CampaignManifest {
         }
         let tmp = path.with_extension("json.tmp");
         std::fs::write(&tmp, serde_json::to_vec_pretty(self)?)?;
-        std::fs::rename(&tmp, path).with_context(|| {
-            format!(
-                "failed to publish campaign manifest {}",
-                path.display()
-            )
-        })?;
+        std::fs::rename(&tmp, path)
+            .with_context(|| format!("failed to publish campaign manifest {}", path.display()))?;
         Ok(())
     }
 }
@@ -123,7 +123,11 @@ fn command_output(program: &str, args: &[&str]) -> Option<String> {
 }
 
 fn git_output(root: &Path, args: &[&str]) -> Option<String> {
-    let output = Command::new("git").args(args).current_dir(root).output().ok()?;
+    let output = Command::new("git")
+        .args(args)
+        .current_dir(root)
+        .output()
+        .ok()?;
     if !output.status.success() {
         return None;
     }
@@ -195,13 +199,13 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let artifact = dir.path().join("result.json");
         std::fs::write(&artifact, b"{}\n").unwrap();
-        let mut manifest = CampaignManifest::capture(
-            "weir", "bayesian", 4, 1, 1, 7, "local", dir.path(),
-        );
+        let mut manifest =
+            CampaignManifest::capture("weir", "bayesian", 4, 1, 1, 7, "local", dir.path());
         manifest.add_artifact(&artifact).unwrap();
         let path = dir.path().join("results/manifest.json");
         manifest.write_atomic(&path).unwrap();
-        let parsed: CampaignManifest = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+        let parsed: CampaignManifest =
+            serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
         assert_eq!(parsed.schema_version, MANIFEST_SCHEMA_VERSION);
         assert_eq!(parsed.artifacts[0].bytes, 3);
         assert!(parsed.artifacts[0].sha256.is_some());

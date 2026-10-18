@@ -242,7 +242,11 @@ impl Optimizer for MapElitesOptimizer {
         if state.evaluations > self.budget {
             anyhow::bail!("checkpoint evaluations exceed optimizer budget")
         }
-        if state.archive.iter().any(|entry| entry.genome.values.len() != self.space.dimension()) {
+        if state
+            .archive
+            .iter()
+            .any(|entry| entry.genome.values.len() != self.space.dimension())
+        {
             anyhow::bail!("checkpoint search-space dimension does not match genome")
         }
         self.evaluations = state.evaluations;

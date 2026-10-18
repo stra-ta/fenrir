@@ -97,7 +97,11 @@ where
                 probes.push(value as f64);
             }
         } else {
-            probes.extend([lo, (lo + hi) * 0.5, 0.0].into_iter().map(|v| v.clamp(lo, hi)));
+            probes.extend(
+                [lo, (lo + hi) * 0.5, 0.0]
+                    .into_iter()
+                    .map(|v| v.clamp(lo, hi)),
+            );
             let low = lo;
             let mut high = original.clamp(lo, hi);
             for _ in 0..12 {
@@ -143,8 +147,7 @@ mod tests {
         candidate.values.insert("topology.producers".into(), 8.0);
         candidate.values.insert("payload.size".into(), 2.0);
         let minimized = minimize_genome(&space, &candidate, |genome| {
-            genome.values["topology.producers"] >= 1.0
-                && genome.values["payload.size"] == 2.0
+            genome.values["topology.producers"] >= 1.0 && genome.values["payload.size"] == 2.0
         });
         assert_eq!(minimized.values["topology.producers"], 1.0);
         assert_eq!(minimized.values["payload.size"], 2.0);

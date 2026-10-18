@@ -7,11 +7,11 @@ pub mod random;
 pub use bayesian::BayesianOptimizer;
 pub use cmaes::CmaEsOptimizer;
 pub use map_elites::MapElitesOptimizer;
+pub use novelty::{NoveltyArchive, cosine_distance};
 pub use random::RandomSearch;
-pub use novelty::{cosine_distance, NoveltyArchive};
 
+use anyhow::{Result, anyhow};
 use fenrir_core::{Observation, SampledGenome, Score};
-use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]

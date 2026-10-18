@@ -27,19 +27,45 @@ mod tests {
             },
             traffic: TrafficGenome {
                 arrival_process: crate::genome::ArrivalProcess::Constant,
-                rate: ParameterSpec::Range { min: 1.0, max: 2.0, log: false },
-                burstiness: ParameterSpec::Range { min: 0.0, max: 1.0, log: false },
-                correlation: ParameterSpec::Range { min: 0.0, max: 1.0, log: false },
+                rate: ParameterSpec::Range {
+                    min: 1.0,
+                    max: 2.0,
+                    log: false,
+                },
+                burstiness: ParameterSpec::Range {
+                    min: 0.0,
+                    max: 1.0,
+                    log: false,
+                },
+                correlation: ParameterSpec::Range {
+                    min: 0.0,
+                    max: 1.0,
+                    log: false,
+                },
             },
             payload: crate::genome::PayloadGenome {
                 size_distribution: crate::genome::SizeDistribution::Fixed,
-                size: ParameterSpec::Choice { values: vec![serde_json::json!(1)] },
+                size: ParameterSpec::Choice {
+                    values: vec![serde_json::json!(1)],
+                },
                 key_distribution: crate::genome::KeyDistribution::Uniform,
             },
             behavior: BehaviorGenome {
-                read_write_ratio: ParameterSpec::Range { min: 0.0, max: 1.0, log: false },
-                lifetime_ns: ParameterSpec::Range { min: 1.0, max: 2.0, log: false },
-                think_time_ns: ParameterSpec::Range { min: 0.0, max: 1.0, log: false },
+                read_write_ratio: ParameterSpec::Range {
+                    min: 0.0,
+                    max: 1.0,
+                    log: false,
+                },
+                lifetime_ns: ParameterSpec::Range {
+                    min: 1.0,
+                    max: 2.0,
+                    log: false,
+                },
+                think_time_ns: ParameterSpec::Range {
+                    min: 0.0,
+                    max: 1.0,
+                    log: false,
+                },
             },
             faults: None,
         };

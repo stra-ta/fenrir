@@ -470,7 +470,11 @@ impl Optimizer for CmaEsOptimizer {
             .into_iter()
             .map(|(vector, score)| (DVector::from_vec(vector), score))
             .collect();
-        if self.buffer.iter().any(|(v, _)| v.len() != self.space.dimension()) {
+        if self
+            .buffer
+            .iter()
+            .any(|(v, _)| v.len() != self.space.dimension())
+        {
             anyhow::bail!("checkpoint buffer dimension does not match genome")
         }
         self.best_score = envelope.best_score;

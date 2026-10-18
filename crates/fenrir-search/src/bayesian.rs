@@ -8,7 +8,7 @@
 //! `nalgebra` linear algebra already used by the CMA-ES optimiser.
 
 use crate::{Evaluation, Optimizer};
-use fenrir_core::{ParamType, SampledGenome, SearchSpace, Score};
+use fenrir_core::{ParamType, SampledGenome, Score, SearchSpace};
 use nalgebra::{DMatrix, DVector};
 use rand::SeedableRng;
 use rand_chacha::ChaCha12Rng;
@@ -153,11 +153,9 @@ impl BayesianOptimizer {
                     (lhs[i] - rhs[i]).abs()
                         / (self.space.bounds[i].1 - self.space.bounds[i].0).max(1.0)
                 }
-                _ => {
-                    (self.normalized_coordinate(i, lhs[i])
-                        - self.normalized_coordinate(i, rhs[i]))
-                        .abs()
-                }
+                _ => (self.normalized_coordinate(i, lhs[i])
+                    - self.normalized_coordinate(i, rhs[i]))
+                .abs(),
             };
             squared_distance += distance * distance;
         }
@@ -214,10 +212,8 @@ impl BayesianOptimizer {
         for row in 0..n {
             targets[row] = (feasible[row].score - mean) / scale;
             for col in 0..n {
-                matrix[(row, col)] = self.kernel(
-                    &feasible[row].coordinates,
-                    &feasible[col].coordinates,
-                );
+                matrix[(row, col)] =
+                    self.kernel(&feasible[row].coordinates, &feasible[col].coordinates);
             }
             matrix[(row, row)] += self.config.noise + JITTER;
         }
@@ -243,9 +239,7 @@ impl BayesianOptimizer {
         let sign = if value < 0.0 { -1.0 } else { 1.0 };
         let x = value.abs() / 2.0_f64.sqrt();
         let t = 1.0 / (1.0 + 0.3275911 * x);
-        let poly = (((((1.061405429 * t - 1.453152027) * t) + 1.421413741) * t
-            - 0.284496736)
-            * t
+        let poly = (((((1.061405429 * t - 1.453152027) * t) + 1.421413741) * t - 0.284496736) * t
             + 0.254829592)
             * t;
         let erf = sign * (1.0 - poly * (-x * x).exp());
@@ -345,7 +339,11 @@ impl Optimizer for BayesianOptimizer {
         if state.evaluations > self.budget {
             anyhow::bail!("checkpoint evaluations exceed optimizer budget")
         }
-        if state.observations.iter().any(|p| p.coordinates.len() != self.space.dimension()) {
+        if state
+            .observations
+            .iter()
+            .any(|p| p.coordinates.len() != self.space.dimension())
+        {
             anyhow::bail!("checkpoint search-space dimension does not match genome")
         }
         self.evaluations = state.evaluations;
@@ -383,7 +381,11 @@ mod tests {
         Evaluation {
             iteration: 0,
             genome,
-            score: if feasible { Score(score) } else { Score::infeasible() },
+            score: if feasible {
+                Score(score)
+            } else {
+                Score::infeasible()
+            },
             observation,
         }
     }
